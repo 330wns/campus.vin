@@ -651,9 +651,9 @@
     else if (target === 'bulk') { bulkColor = color; drawLayers(); }
   }
 
-  // Menu image zoom: click zooms 4.1x into the clicked spot, drag pans, click again fits.
+  // Menu image zoom: click zooms 3x into the clicked spot, drag pans, click again fits.
   // Same interaction as the KISJ cafeteria Chrome extension.
-  const MENU_ZOOM = 4.1;
+  const MENU_ZOOM = 3;
   let menuDrag = null;
   function toggleMenuZoom(view, event) {
     const inner = view.firstElementChild;
