@@ -146,12 +146,13 @@
     const work=item?.courseworkID||item?.courseWorkId||item?.courseworkId;
     if(course&&work)keys.add(`${course}:${work}`);
     if(item?.id)keys.add(`id:${item.id}`);
+    if(item?.url)keys.add(`url:${item.url}`);
     return [...keys];
   };
   const classroomKey=item=>classroomKeys(item)[0]||item?.id;
   function putTrash(type,item,title){
     state.trash.unshift({id:uid(),type,item,title,deletedAt:new Date().toISOString()});
-    if(type==='homework' && /google/i.test(item.source || '')){
+    if(type==='homework'){
       state.dismissedClassroomKeys ||= [];
       for(const key of classroomKeys(item))if(!state.dismissedClassroomKeys.includes(key))state.dismissedClassroomKeys.push(key);
     }
@@ -164,7 +165,10 @@
       const incoming=new Map(result.homework.map(item=>[classroomKey(item),item]));
       const deleted=new Set([...(state.dismissedClassroomKeys || []),
         ...state.trash.filter(t=>t.type==='homework').flatMap(t=>classroomKeys(t.item))]);
-      state.homework=state.homework.filter(item=>item.source!=='google-classroom'||incoming.has(classroomKey(item)));
+      state.homework=state.homework.filter(item=>{
+        if(classroomKeys(item).some(candidate=>deleted.has(candidate)))return false;
+        return item.source!=='google-classroom'||incoming.has(classroomKey(item));
+      });
       for(const [key,item] of incoming){
         if(!key||classroomKeys(item).some(candidate=>deleted.has(candidate)))continue;
         const old=state.homework.find(h=>classroomKey(h)===key);
