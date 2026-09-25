@@ -246,7 +246,7 @@
     const menuImage = state.cafeteria[state.division];
     return `<div class="original-menu"><div class="original-menu-head"><h2>Original Menu</h2>${btn('Done', {action: 'close', kind: 'prominent'})}</div><div class="hairline"></div>${menuImageView(menuImage)}</div>`;
   }
-  const menuImageView = menuImage => `<div class="menu-image-view">${menuImage?.image ? `<img src="${esc(menuImage.image)}" alt="${esc(state.division)} cafeteria menu">` : emptyState('No menu image', cafeteriaError || 'Refresh Cafeteria to load the latest KIS menu image.', 'photo')}</div>`;
+  const menuImageView = (menuImage, zoomable = false) => `<div class="menu-image-view">${menuImage?.image ? `${zoomable ? `<button type="button" class="menu-zoom" data-action="original-menu" title="Open larger" aria-label="Open larger menu image">` : ''}<img src="${esc(menuImage.image)}" alt="${esc(state.division)} cafeteria menu">${zoomable ? '</button>' : ''}` : emptyState('No menu image', cafeteriaError || 'Refresh Cafeteria to load the latest KIS menu image.', 'photo')}</div>`;
 
   // Schedule
   const showsSetupPrompt = () => needsScheduleSetup() && !enteringManually;
@@ -463,7 +463,7 @@
   function cafeteriaView() {
     const menuImage = state.cafeteria[state.division];
     const controls = `<div class="cafeteria-controls">${segmented(['ES', 'MS', 'HS'].map(d => [d, d]), state.division, 'division', 'style="width:140px"')}<select class="popup" aria-label="Language" style="width:110px"><option>한국어</option></select><span class="spacer"></span>${btn(cafeteriaLoading ? 'Loading…' : 'Refresh', {action: 'cafe-refresh', kind: 'prominent', disabled: cafeteriaLoading})}${btn('Original', {action: 'original-menu'})}</div>`;
-    const panel = `<section class="card menu-panel-card"><div class="card-head">${icon('photo')}${micro('Menu Image')}${cafeteriaLoading ? spinner : menuImage ? `<span class="caption faint one-line">Cached ${shortDateTime(menuImage.fetchedAt)}</span>` : ''}<span class="spacer"></span>${btn('Open Larger', {action: 'original-menu'})}</div>${menuImageView(menuImage)}</section>`;
+    const panel = `<section class="card menu-panel-card"><div class="card-head">${icon('photo')}${micro('Menu Image')}${cafeteriaLoading ? spinner : menuImage ? `<span class="caption faint one-line">Cached ${shortDateTime(menuImage.fetchedAt)}</span>` : ''}<span class="spacer"></span>${btn('Open Larger', {action: 'original-menu'})}</div>${menuImageView(menuImage, true)}</section>`;
     return `<div class="page cafeteria-page"><div class="cafeteria-header">${header('Cafeteria', 'Latest KIS menu image.')}${controls}</div>${panel}${cafeteriaError ? notice(cafeteriaError, 'warn') : ''}</div>`;
   }
 
