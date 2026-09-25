@@ -171,7 +171,8 @@
       });
       for(const [key,item] of incoming){
         if(!key||classroomKeys(item).some(candidate=>deleted.has(candidate)))continue;
-        const old=state.homework.find(h=>classroomKey(h)===key);
+        const itemKeys=new Set(classroomKeys(item));
+        const old=state.homework.find(h=>classroomKeys(h).some(candidate=>itemKeys.has(candidate)));
         if(old)Object.assign(old,item,{note:old.note||'',color:old.color||'#3c82c4',complete:old.complete});
         else state.homework.push({...item,note:'',color:'#3c82c4',complete:false});
       }
