@@ -1,0 +1,61 @@
+name: Deploy Campus Web to Cloudflare Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check JavaScript
+        run: |
+          node --check app.js
+          node --check google.js
+          node --check powerschool.js
+          node --check transfer.js
+          node --check menu-sw.js
+      - name: Prepare site
+        run: |
+          mkdir dist
+          cp index.html styles.css extras.css app.js powerschool.js google.js transfer.js menu-sw.js campus-icon-64.png campus-favicon-32.png dist/
+      - name: Verify Cloudflare credentials
+        env:
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          test -n "$CF_ACCOUNT" || { echo 'Set CLOUDFLARE_ACCOUNT_ID in repository Actions secrets'; exit 1; }
+          test -n "$CF_TOKEN" || { echo 'Set CLOUDFLARE_API_TOKEN in repository Actions secrets'; exit 1; }
+      - name: Ensure Pages project exists
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          projects=$(npx --yes wrangler@4 pages project list --json)
+          if ! jq -e '.[] | select(.name == "campus-vin")' <<< "$projects" > /dev/null; then
+            npx --yes wrangler@4 pages project create campus-vin --production-branch main
+          fi
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=campus-vin --branch=main
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attach campus.vin domain
+        env:
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          endpoint="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/pages/projects/campus-vin/domains"
+          current=$(curl --fail-with-body --silent --show-error -H "Authorization: Bearer $CF_TOKEN" "$endpoint")
+          if ! jq -e '.result[] | select(.name == "campus.vin")' <<< "$current" > /dev/null; then
+            response=$(curl --fail-with-body --silent --show-error -X POST "$endpoint" -H "Authorization: Bearer $CF_TOKEN" -H 'Content-Type: application/json' --data '{"name":"campus.vin"}')
+            jq -e '.success == true' <<< "$response" > /dev/null
+          fi

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f6f3">
+  <meta name="description" content="Campus keeps your KIS schedule, homework, calendar, and cafeteria menu together on this device.">
+  <link rel="icon" type="image/png" href="campus-favicon-32.png">
+  <title>Campus</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="extras.css">
+  <script defer src="powerschool.js"></script>
+  <script defer src="google.js"></script>
+  <script defer src="transfer.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Main navigation">
+      <div class="brand"><span class="brand-mark"><img src="campus-icon-64.png" alt=""></span><span>Campus</span></div>
+      <nav class="navigation" id="navigation"></nav>
+      <div class="sidebar-bottom"><button type="button" id="settings-button" class="nav-item"></button><div class="local-note">Saved on this device</div></div>
+    </aside>
+    <div class="main-column">
+      <header class="topbar"><button class="mobile-brand" id="mobile-menu" type="button" aria-label="Open menu">☰</button><div class="topbar-title">Campus</div><div id="topbar-meta" class="topbar-meta"></div></header>
+      <main id="view" class="view" tabindex="-1"></main>
+    </div>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toast-root" aria-live="polite"></div>
+</body>
+</html>
