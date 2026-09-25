@@ -181,8 +181,11 @@
 .menu-panel-card .card-head .btn { margin-left: auto; }
 .menu-image-view { display: flex; align-items: center; justify-content: center; height: 540px; padding: 12px; border-radius: 8px; background: var(--campus-fill); overflow: hidden; }
 .menu-image-view img { max-width: 100%; max-height: 100%; object-fit: contain; }
-.menu-zoom { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }
-.menu-zoom:hover img { opacity: .9; }
+.menu-zoom { width: 100%; height: 100%; overflow: hidden; cursor: zoom-in; user-select: none; -webkit-user-select: none; touch-action: pan-x pan-y; }
+.menu-zoom.zoomed { overflow: auto; overscroll-behavior: contain; cursor: zoom-out; }
+.menu-zoom.dragging { cursor: grabbing; }
+.menu-zoom-inner { width: 100%; height: 100%; transition: width .25s ease, height .25s ease; }
+.menu-zoom-inner img { display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 .original-menu { display: flex; flex-direction: column; height: min(92vh, 900px); background: var(--campus-surface); }
 .original-menu-head { display: flex; align-items: center; padding: 11px 16px; }
 .original-menu-head h2 { flex: 1; margin: 0; font: 600 15px var(--serif); }

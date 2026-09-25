@@ -246,7 +246,7 @@
     const menuImage = state.cafeteria[state.division];
     return `<div class="original-menu"><div class="original-menu-head"><h2>Original Menu</h2>${btn('Done', {action: 'close', kind: 'prominent'})}</div><div class="hairline"></div>${menuImageView(menuImage)}</div>`;
   }
-  const menuImageView = (menuImage, zoomable = false) => `<div class="menu-image-view">${menuImage?.image ? `${zoomable ? `<button type="button" class="menu-zoom" data-action="original-menu" title="Open larger" aria-label="Open larger menu image">` : ''}<img src="${esc(menuImage.image)}" alt="${esc(state.division)} cafeteria menu">${zoomable ? '</button>' : ''}` : emptyState('No menu image', cafeteriaError || 'Refresh Cafeteria to load the latest KIS menu image.', 'photo')}</div>`;
+  const menuImageView = menuImage => `<div class="menu-image-view">${menuImage?.image ? `<div class="menu-zoom" data-zoom-view title="Click to zoom in"><div class="menu-zoom-inner"><img src="${esc(menuImage.image)}" alt="${esc(state.division)} cafeteria menu" draggable="false"></div></div>` : emptyState('No menu image', cafeteriaError || 'Refresh Cafeteria to load the latest KIS menu image.', 'photo')}</div>`;
 
   // Schedule
   const showsSetupPrompt = () => needsScheduleSetup() && !enteringManually;
@@ -463,7 +463,7 @@
   function cafeteriaView() {
     const menuImage = state.cafeteria[state.division];
     const controls = `<div class="cafeteria-controls">${segmented(['ES', 'MS', 'HS'].map(d => [d, d]), state.division, 'division', 'style="width:140px"')}<select class="popup" aria-label="Language" style="width:110px"><option>한국어</option></select><span class="spacer"></span>${btn(cafeteriaLoading ? 'Loading…' : 'Refresh', {action: 'cafe-refresh', kind: 'prominent', disabled: cafeteriaLoading})}${btn('Original', {action: 'original-menu'})}</div>`;
-    const panel = `<section class="card menu-panel-card"><div class="card-head">${icon('photo')}${micro('Menu Image')}${cafeteriaLoading ? spinner : menuImage ? `<span class="caption faint one-line">Cached ${shortDateTime(menuImage.fetchedAt)}</span>` : ''}<span class="spacer"></span>${btn('Open Larger', {action: 'original-menu'})}</div>${menuImageView(menuImage, true)}</section>`;
+    const panel = `<section class="card menu-panel-card"><div class="card-head">${icon('photo')}${micro('Menu Image')}${cafeteriaLoading ? spinner : menuImage ? `<span class="caption faint one-line">Cached ${shortDateTime(menuImage.fetchedAt)}</span>` : ''}<span class="spacer"></span>${btn('Open Larger', {action: 'original-menu'})}</div>${menuImageView(menuImage)}</section>`;
     return `<div class="page cafeteria-page"><div class="cafeteria-header">${header('Cafeteria', 'Latest KIS menu image.')}${controls}</div>${panel}${cafeteriaError ? notice(cafeteriaError, 'warn') : ''}</div>`;
   }
 
@@ -650,6 +650,58 @@
     else if (target === 'event') { eventDraft.color = color; drawLayers(); }
     else if (target === 'bulk') { bulkColor = color; drawLayers(); }
   }
+
+  // Menu image zoom: click zooms 4.1x into the clicked spot, drag pans, click again fits.
+  // Same interaction as the KISJ cafeteria Chrome extension.
+  const MENU_ZOOM = 4.1;
+  let menuDrag = null;
+  function toggleMenuZoom(view, event) {
+    const inner = view.firstElementChild;
+    if (view.classList.contains('zoomed')) {
+      view.classList.remove('zoomed');
+      inner.style.width = inner.style.height = '';
+      view.title = 'Click to zoom in';
+      view.scrollTo({top: 0, left: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
+      return;
+    }
+    const rect = inner.getBoundingClientRect(), relX = (event.clientX - rect.left) / rect.width, relY = (event.clientY - rect.top) / rect.height;
+    view.classList.add('zoomed');
+    view.title = 'Drag to move · Click to zoom out';
+    inner.style.width = `${rect.width * MENU_ZOOM}px`;
+    inner.style.height = `${rect.height * MENU_ZOOM}px`;
+    // Keep the clicked spot centered while the size transition runs.
+    const started = performance.now();
+    const follow = () => {
+      const size = inner.getBoundingClientRect();
+      view.scrollLeft = size.width * relX - view.clientWidth / 2;
+      view.scrollTop = size.height * relY - view.clientHeight / 2;
+      if (performance.now() - started < 320) requestAnimationFrame(follow);
+    };
+    requestAnimationFrame(follow);
+  }
+  document.addEventListener('pointerdown', e => {
+    const view = e.target.closest('[data-zoom-view]');
+    if (!view || e.button !== 0) return;
+    menuDrag = {view, x: e.clientX, y: e.clientY, left: view.scrollLeft, top: view.scrollTop, moved: false, zoomed: view.classList.contains('zoomed')};
+  });
+  document.addEventListener('pointermove', e => {
+    if (!menuDrag || !menuDrag.zoomed || e.pointerType !== 'mouse') return;
+    const dx = e.clientX - menuDrag.x, dy = e.clientY - menuDrag.y;
+    if (!menuDrag.moved && Math.hypot(dx, dy) < 3) return;
+    menuDrag.moved = true;
+    menuDrag.view.classList.add('dragging');
+    menuDrag.view.scrollLeft = menuDrag.left - dx;
+    menuDrag.view.scrollTop = menuDrag.top - dy;
+  });
+  document.addEventListener('pointerup', e => {
+    const drag = menuDrag;
+    menuDrag = null;
+    if (!drag) return;
+    drag.view.classList.remove('dragging');
+    // A drag that pans the image is not a click; touch scrolling is handled natively.
+    if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 6 && e.target.closest('[data-zoom-view]') === drag.view) toggleMenuZoom(drag.view, e);
+  });
+  document.addEventListener('pointercancel', () => { menuDrag?.view.classList.remove('dragging'); menuDrag = null; });
 
   // Events
   document.addEventListener('paste', e => { const target = e.target.closest('[data-paste]'); if (!target) return; e.preventDefault(); parsePaste(target.dataset.paste, e.clipboardData?.getData('text/html') || e.clipboardData?.getData('text/plain') || ''); });
