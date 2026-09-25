@@ -408,7 +408,7 @@
         occupied[lane].push([start, end]);
         segments.push({event: e, start, end, lane, before: e.start < days[start], after: (e.end || e.start) > days[end]});
       });
-      const eventHeight = occupied.length * 24, height = Math.max(cellHeight, 48 + eventHeight + 54);
+      const eventHeight = occupied.length * 24, dueCounts = days.map(iso => iso ? state.homework.filter(h => dateKey(new Date(h.due)) === iso).length : 0), dueHeight = Math.max(...dueCounts.map(n => Math.min(n, 2) * 24 + (n > 2 ? 18 : 0))), height = Math.max(cellHeight, 48 + eventHeight + dueHeight);
       const cells = days.map(iso => {
         if (!iso) return `<div class="day-cell blank" style="height:${height}px"></div>`;
         const dayEvents = events.filter(e => covers(e, iso)), due = state.homework.filter(h => dateKey(new Date(h.due)) === iso), noSchool = dayEvents.some(e => e.type === 'break');
