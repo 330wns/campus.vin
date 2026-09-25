@@ -320,18 +320,25 @@
   }
 
   // PowerSchool sync sheet
-  function syncSheet() {
-    const ms = state.division === 'MS', ready = draft.matrix && (ms || draft.week), anchor = draft.week?.anchor || draft.matrix?.anchor;
-    const actionTitle = state.rotation?.lastSyncedAt ? 'Redo Sync' : 'Confirm & Sync';
+  const syncReady = () => Boolean(draft.matrix && (state.division === 'MS' || draft.week));
+  const syncActionTitle = () => state.rotation?.lastSyncedAt ? 'Redo Sync' : 'Confirm & Sync';
+  // The paste steps, status and preview shared by the sync sheet and the setup guide.
+  function syncContent() {
+    const ms = state.division === 'MS', ready = syncReady(), anchor = draft.week?.anchor || draft.matrix?.anchor, actionTitle = syncActionTitle();
     const pageStep = (kind, title, url, copy) => `<div class="paste-step"><div class="paste-step-head"><strong>${title}</strong>${draft[kind] ? pill(kind === 'week' ? `${Object.keys(draft.week.times).length} days of times` : '10 A/B schedules', true) : ''}</div><p class="caption sub">${copy}</p><div class="paste-actions"><a class="btn outline" href="${url}" target="_blank" rel="noopener noreferrer">${icon('compass')}<span>Open ${title}</span></a>${btn('Paste copied page', {action: 'read-clipboard', attrs: `data-kind="${kind}"`})}<label class="btn outline" for="file-${kind}"><span>Choose saved HTML</span></label><input class="sync-file" id="file-${kind}" type="file" data-kind="${kind}" accept=".html,.htm,text/html" hidden></div><textarea class="paste-zone ${draft[kind] ? 'ready' : ''}" data-paste="${kind}" aria-label="Paste ${title}" placeholder="${draft[kind] ? `${title} ready` : 'Click here and press ⌘V (or Ctrl+V)'}"></textarea></div>`;
     const status = ready ? 'Both pages were read. Review the schedules below, then sync.' : draft.matrix || draft.week ? 'Waiting for the remaining page.' : 'Copy the PowerSchool page with ⌘A then ⌘C, then paste it here.';
     const summary = ready ? `<div class="summary-grid card">${KEYS.map((k, i) => `<div class="summary-row"><span class="summary-day">${DAYS[Math.floor(i / 2)]}</span>${pill(k.endsWith('A') ? 'A' : 'B', true)}<span class="caption faint mono">${draft.matrix.schedules[k].length} classes</span></div>`).join('')}</div>` : '';
     const manual = ready && !anchor ? `<div class="manual-rotation"><div><div class="subheadline strong">Choose one known day from this week</div><div class="caption sub">PowerSchool sometimes omits the A/B label on weekends. Choose a Monday–Friday day from this week and its A/B rotation. On Saturday or Sunday, use the weekdays that just passed, not next week.</div></div><div class="manual-row"><span class="caption sub">Weekday</span>${segmented(DAYS.map((d, i) => [i, d]), fallbackWeekday, 'fallback-weekday')}</div><div class="manual-row"><span class="caption sub">Rotation</span>${segmented([['A', 'A Day'], ['B', 'B Day']], fallbackDay, 'fallback-day', 'style="width:190px"')}</div></div>` : '';
-    return `<div class="sync-sheet"><div class="sheet-scroll">${header('PowerSchool Sync', 'Campus reads the schedule from the PowerSchool pages you copy into this browser.')}<div class="card instructions">${instruction(1, `Open ${ms ? 'Matrix View' : 'Week View and Matrix View'} in PowerSchool. Sign in there if it asks.`)}${instruction(2, 'On each page, press ⌘A then ⌘C once the schedule has fully loaded.')}${instruction(3, `Paste below, then press ${actionTitle}.`)}<div class="hairline"></div>${ms ? '' : pageStep('week', 'Week View', WEEK, 'Class start and end times for Monday–Friday.')}${pageStep('matrix', 'Matrix View', MATRIX, ms ? 'Courses, rooms and teachers for all ten A/B days. MS times are filled in automatically.' : 'Courses, rooms and teachers for all ten A/B days.')}</div>${notice('Campus reads the copied page inside this browser. It never receives your PowerSchool password or cookies.', 'shield')}<div class="status-block">${micro('Status')}<div class="subheadline sub">${esc(status)}</div>${draft.error ? notice(draft.error, 'warn') : ''}${manual}${summary}</div></div><div class="sheet-footer"><a class="btn outline" href="${ms ? MATRIX : WEEK}" target="_blank" rel="noopener noreferrer">${icon('compass')}<span>Open PowerSchool</span></a><span class="spacer"></span>${btn(actionTitle, {action: 'sync-save', sym: state.rotation?.lastSyncedAt ? 'refresh' : 'checkCircle', disabled: !ready})}${btn('Done', {action: 'close', kind: 'prominent'})}</div></div>`;
+    return `<div class="card instructions">${instruction(1, `Open ${ms ? 'Matrix View' : 'Week View and Matrix View'} in PowerSchool. Sign in there if it asks.`)}${instruction(2, 'On each page, press ⌘A then ⌘C once the schedule has fully loaded.')}${instruction(3, `Paste below, then press ${actionTitle}.`)}<div class="hairline"></div>${ms ? '' : pageStep('week', 'Week View', WEEK, 'Class start and end times for Monday–Friday.')}${pageStep('matrix', 'Matrix View', MATRIX, ms ? 'Courses, rooms and teachers for all ten A/B days. MS times are filled in automatically.' : 'Courses, rooms and teachers for all ten A/B days.')}</div>${notice('Campus reads the copied page inside this browser. It never receives your PowerSchool password or cookies.', 'shield')}<div class="status-block">${micro('Status')}<div class="subheadline sub">${esc(status)}</div>${draft.error ? notice(draft.error, 'warn') : ''}${manual}${summary}</div>`;
+  }
+  const syncButton = (kind = 'outline') => btn(syncActionTitle(), {action: 'sync-save', kind, sym: state.rotation?.lastSyncedAt ? 'refresh' : 'checkCircle', disabled: !syncReady()});
+  function syncSheet() {
+    const ms = state.division === 'MS';
+    return `<div class="sync-sheet"><div class="sheet-scroll">${header('PowerSchool Sync', 'Campus reads the schedule from the PowerSchool pages you copy into this browser.')}${syncContent()}</div><div class="sheet-footer"><a class="btn outline" href="${ms ? MATRIX : WEEK}" target="_blank" rel="noopener noreferrer">${icon('compass')}<span>Open PowerSchool</span></a><span class="spacer"></span>${syncButton()}${btn('Done', {action: 'close', kind: 'prominent'})}</div></div>`;
   }
   const instruction = (n, text) => `<div class="instruction"><span class="instruction-number">${n}</span><span class="subheadline sub">${esc(text)}</span></div>`;
   function openSync() { draft = {week: null, matrix: null, error: ''}; openSheet(syncSheet, 'wide'); }
-  function parsePaste(kind, html) { try { draft[kind] = kind === 'week' ? PowerSchoolImport.parseWeek(html) : PowerSchoolImport.parseMatrix(html); draft.error = ''; drawLayers(); toast(`${kind === 'week' ? 'Week View' : 'Matrix View'} copied successfully.`); } catch (e) { draft.error = e.message; drawLayers(); } }
+  function parsePaste(kind, html) { try { draft[kind] = kind === 'week' ? PowerSchoolImport.parseWeek(html) : PowerSchoolImport.parseMatrix(html); draft.error = ''; render(); toast(`${kind === 'week' ? 'Week View' : 'Matrix View'} copied successfully.`); } catch (e) { draft.error = e.message; render(); } }
   function saveSync() {
     try {
       const monday = draft.week?.monday || plusDays(dateKey(), -dayIndex(dateKey()));
@@ -339,9 +346,10 @@
       const result = state.division === 'MS' ? PowerSchoolImport.buildMiddleSchool(draft.matrix, fallback) : PowerSchoolImport.build(draft.week, draft.matrix, fallback, state.schedules);
       state.schedules = result.schedules; state.rotation = result.rotation;
       if (!save()) return;
-      closeLayer(); enteringManually = false; render();
+      if (layers.length) closeLayer();
+      draft = {week: null, matrix: null, error: ''}; enteringManually = false; render();
       toast(`Synced all 10 A/B schedules.${result.recovered.length ? ' Previous times used for ' + result.recovered.join(', ') + '.' : ''}`);
-    } catch (e) { draft.error = e.message; drawLayers(); }
+    } catch (e) { draft.error = e.message; render(); }
   }
 
   // Homework
@@ -504,7 +512,7 @@
     const descriptions = {ES: 'Elementary School calendar and cafeteria', MS: 'Middle School calendar and cafeteria', HS: 'High School calendar and cafeteria'};
     let body;
     if (step === 0) body = heading('building', 'Welcome to Campus', 'First, choose your school division. This controls the calendar and cafeteria information Campus loads.') + `<section class="card setup-card"><div class="headline label-line">${icon('download')}Already use Campus on Mac?</div><div class="caption sub">Choose Import from Mac app, then approve sending in the Mac app. Campus will ask before replacing browser data. Google sign-in is not transferred.</div><div>${btn('Import from Mac app…', {action: 'import-from-app', sym: 'download'})}</div></section><section class="card setup-card"><div class="headline">School division</div>${segmented(['ES', 'MS', 'HS'].map(d => [d, d]), state.division, 'setup-division')}<div class="caption sub">${descriptions[state.division]}</div></section>`;
-    else if (step === 1) body = heading('calClock', 'Set up your schedule', 'Campus can import all ten Monday–Friday A/B schedules from the PowerSchool pages you copy into this browser.') + `<section class="card setup-card">${instruction(1, 'Open PowerSchool and sign in if needed.')}${instruction(2, 'Wait until My Schedule is fully loaded.')}${instruction(3, 'Return here and press Confirm & Sync.')}<div class="button-row"><a class="btn outline" href="${state.division === 'MS' ? MATRIX : WEEK}" target="_blank" rel="noopener noreferrer">${icon('compass')}<span>Open PowerSchool</span></a>${btn('Confirm & Sync', {action: 'sync', kind: 'prominent', sym: 'sync'})}</div></section>${notice('Campus reads only the pages you paste into it. It never receives your PowerSchool password.', 'shield')}${!needsSetup ? `<div class="success-banner">${icon('checkCircleFill')}<div><strong>All 10 schedules synced</strong><span class="subheadline sub">Monday–Friday A/B schedules are ready to use.</span></div></div>` : '<div class="caption sub">Not synced yet.</div>'}`;
+    else if (step === 1) body = heading('calClock', 'Set up your schedule', 'Campus can import all ten Monday–Friday A/B schedules from the PowerSchool pages you copy into this browser.') + `${!needsSetup ? `<div class="success-banner">${icon('checkCircleFill')}<div><strong>All 10 schedules synced</strong><span class="subheadline sub">Monday–Friday A/B schedules are ready to use.</span></div></div>` : ''}${syncContent()}<div class="button-row">${syncButton('prominent')}</div>`;
     else if (step === 2) body = heading('books', 'Bring in your homework', 'Connect Google Classroom to show upcoming assignments in Today, Homework, and Calendar.') + `<section class="card setup-card"><div class="headline label-line">${icon(connected ? 'checkCircleFill' : 'personPlus')}${connected ? 'Google Classroom is connected' : 'Connect your school Google account'}</div><div class="caption sub">Campus requests access to your classes and coursework. Your Google password is entered only on Google’s sign-in page.</div>${connected ? '' : `<div>${btn('Connect Google Classroom', {action: 'google-connect', kind: 'prominent', sym: 'link'})}</div>`}</section><div class="caption sub">${esc(classroomStatusText())}</div>${classroomError ? notice(classroomError, 'warn') : ''}`;
     else {
       const row = (symbol, title, value, complete) => `<div class="summary-line">${icon(symbol, 'sub')}<span class="grow">${title}</span><span class="caption sub">${value}</span>${icon(complete ? 'checkCircleFill' : 'dashed', complete ? 'ink' : 'faint')}</div>`;
@@ -706,8 +714,8 @@
       case 'original-menu': openSheet(originalMenu, 'menu-sheet'); break;
       case 'sync': openSync(); break;
       case 'read-clipboard': try { const items = await navigator.clipboard.read(); let html = ''; for (const item of items) { if (item.types.includes('text/html')) { html = await (await item.getType('text/html')).text(); break; } if (item.types.includes('text/plain')) html = await (await item.getType('text/plain')).text(); } parsePaste(t.dataset.kind, html); } catch { toast('Clipboard access was blocked. Click the paste box and press ⌘V or Ctrl+V.'); } break;
-      case 'fallback-weekday': fallbackWeekday = Number(value); drawLayers(); break;
-      case 'fallback-day': fallbackDay = value; drawLayers(); break;
+      case 'fallback-weekday': fallbackWeekday = Number(value); render(); break;
+      case 'fallback-day': fallbackDay = value; render(); break;
       case 'sync-save': saveSync(); break;
       case 'manual-start': enteringManually = true; render(); break;
       case 'schedule-select': { if (value === scheduleSelection) break; guardCustom(() => { scheduleSelection = value; if (value === 'custom') loadCustomDraft(); render(); }); break; }
