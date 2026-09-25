@@ -138,15 +138,22 @@
   function menuWorker(){if(!('serviceWorker' in navigator)||!/^https?:$/.test(location.protocol))return Promise.resolve(null);return menuWorkerReady??=navigator.serviceWorker.register('./menu-sw.js').then(()=>navigator.serviceWorker.ready).then(registration=>registration.active).catch(()=>null)}
   async function cacheMenuImage(url){if(!/^https:\/\//i.test(url||''))return;const worker=await menuWorker();worker?.postMessage({type:'cache-menu-image',url})}
   async function refreshCafeteria(silent=false){try{let r;try{r=await fetch(`https://kisj.kr/our/${state.division.toLowerCase()}crawl.php`,{cache:'no-store'})}catch{throw Error('The cafeteria API blocks browser access (CORS).')}if(!r.ok)throw Error(`Cafeteria API returned HTTP ${r.status}.`);const data=await r.json(),urls=data.thisWeek?.length?data.thisWeek:data.nextWeek||[];if(!urls.length)throw Error('No menu image is published for this week or next week.');const entry=urls.find(x=>/kor|korean|kr|ko/i.test(JSON.stringify(x)))||urls[0],url=typeof entry==='string'?entry:Object.values(entry||{}).find(x=>typeof x==='string'&&x.startsWith('http'));if(!url)throw Error('The cafeteria API returned no usable image URL.');const imageURL=new URL(url,'https://kisj.kr/');if(imageURL.protocol!=='https:')throw Error('The cafeteria API returned an insecure image URL.');state.cafeteria[state.division]={image:imageURL.href,fetchedAt:new Date().toISOString()};cafeteriaStatus='';save();render();cacheMenuImage(imageURL.href);if(!silent)toast('Cafeteria menu updated.')}catch(error){cafeteriaStatus=error.message;if(page==='cafeteria')render();if(!silent)toast(cafeteriaStatus)}}
-  const classroomKey=item=>item?.classroomKey || (item?.courseID && item?.courseworkID
-    ? `${item.courseID}:${item.courseworkID}` : item?.courseId && (item?.courseWorkId || item?.courseworkId)
-      ? `${item.courseId}:${item.courseWorkId || item.courseworkId}` : item?.id);
+  const classroomKeys=item=>{
+    const keys=new Set();
+    if(item?.classroomKey)keys.add(String(item.classroomKey));
+    for(const key of item?.classroomKeys||[])if(key)keys.add(String(key));
+    const course=item?.courseID||item?.courseId;
+    const work=item?.courseworkID||item?.courseWorkId||item?.courseworkId;
+    if(course&&work)keys.add(`${course}:${work}`);
+    if(item?.id)keys.add(`id:${item.id}`);
+    return [...keys];
+  };
+  const classroomKey=item=>classroomKeys(item)[0]||item?.id;
   function putTrash(type,item,title){
     state.trash.unshift({id:uid(),type,item,title,deletedAt:new Date().toISOString()});
     if(type==='homework' && /google/i.test(item.source || '')){
       state.dismissedClassroomKeys ||= [];
-      const key=classroomKey(item);
-      if(key&&!state.dismissedClassroomKeys.includes(key))state.dismissedClassroomKeys.push(key);
+      for(const key of classroomKeys(item))if(!state.dismissedClassroomKeys.includes(key))state.dismissedClassroomKeys.push(key);
     }
     save();
   }
@@ -156,10 +163,10 @@
       const result=await CampusGoogle.homework();
       const incoming=new Map(result.homework.map(item=>[classroomKey(item),item]));
       const deleted=new Set([...(state.dismissedClassroomKeys || []),
-        ...state.trash.filter(t=>t.type==='homework').map(t=>classroomKey(t.item))]);
+        ...state.trash.filter(t=>t.type==='homework').flatMap(t=>classroomKeys(t.item))]);
       state.homework=state.homework.filter(item=>item.source!=='google-classroom'||incoming.has(classroomKey(item)));
       for(const [key,item] of incoming){
-        if(!key||deleted.has(key))continue;
+        if(!key||classroomKeys(item).some(candidate=>deleted.has(candidate)))continue;
         const old=state.homework.find(h=>classroomKey(h)===key);
         if(old)Object.assign(old,item,{note:old.note||'',color:old.color||'#3c82c4',complete:old.complete});
         else state.homework.push({...item,note:'',color:'#3c82c4',complete:false});
@@ -172,7 +179,8 @@
   window.addEventListener('campus-google-error',event=>toast(event.detail));
   function restoreTrash(id){const index=state.trash.findIndex(t=>t.id===id);if(index<0)return;const t=state.trash.splice(index,1)[0];if(t.type==='homework'){
     state.homework.push(t.item);
-    state.dismissedClassroomKeys=(state.dismissedClassroomKeys || []).filter(key=>key!==classroomKey(t.item));
+    const restoredKeys=new Set(classroomKeys(t.item));
+    state.dismissedClassroomKeys=(state.dismissedClassroomKeys || []).filter(key=>!restoredKeys.has(key));
   }if(t.type==='event')state.events.push(t.item);if(t.type==='template'){
     state.savedTemplates ||= [];state.savedTemplates.push(t.item);
   }if(t.type==='class'){const {key,block}=t.item;if(key.startsWith('custom:')){state.customDays[key.slice(7)]??={title:'Custom Day',classes:[]};state.customDays[key.slice(7)].classes.push(block)}else if(key.startsWith('all:')){
