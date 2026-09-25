@@ -11,7 +11,7 @@
   const uid=()=>crypto.randomUUID?.()||`${Date.now()}-${Math.random()}`;
   const icons={sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',check:'<path d="M8 6h13M8 12h13M8 18h13M2 6l1 1 2-2M2 12l1 1 2-2M2 18l1 1 2-2"/>',calendar:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 10h18"/>',meal:'<path d="M4 2v8a3 3 0 0 0 6 0V2M7 2v20M18 2c-4 4-4 11 0 12v8"/>',trash:'<path d="M4 7h16M9 7V4h6v3m-9 0 1 14h10l1-14M10 11v6m4-6v6"/>',info:'<circle cx="12" cy="12" r="9"/><path d="M12 10v6m0-9h.01"/>',gear:'<circle cx="12" cy="12" r="3"/><path d="m19.5 12 2-1-2-4-2 1-2-2-1-2h-4l-1 2-2 2-2-1-2-4 2-1-2-2 2-4 2 1 2-2 1-2h4l1 2 2 2 2-1 2 4-2 2Z"/>',plus:'<path d="M12 5v14M5 12h14"/>',sync:'<path d="M20 7v5h-5M4 17v-5h5"/><path d="M5 9a8 8 0 0 1 14-2l1 5M4 12l1 5a8 8 0 0 0 14-2"/>',alert:'<circle cx="12" cy="12" r="9"/><path d="M12 7v6m0 4h.01"/>',external:'<path d="M14 4h6v6m0-6-9 9"/><path d="M20 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h5"/>'};
   const icon=(name,cls='')=>`<svg class="${cls}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]||icons.info}</svg>`;
-  const defaults=()=>({version:1,setupComplete:false,setupStep:0,division:'MS',appearance:'system',schedules:{},rotation:null,homework:[],events:[],remoteEvents:[],remoteUpdated:null,eventOverrides:{},club:{enabled:false,name:'Club',days:[1,3],start:'15:30',end:'16:00'},customDays:{},cafeteria:{},trash:[]});
+  const defaults=()=>({version:1,setupComplete:false,setupStep:0,division:'MS',appearance:'system',schedules:{},rotation:null,homework:[],events:[],remoteEvents:[],remoteUpdated:null,eventOverrides:{},club:{enabled:false,name:'Club',days:[1,3],start:'15:30',end:'16:00'},customDays:{},cafeteria:{},trash:[],savedTemplates:[],dismissedClassroomKeys:[],googleReconnectRequired:false});
   let state;
   try{state={...defaults(),...JSON.parse(localStorage.getItem(KEY)||'{}')}}catch{state=defaults()}
   const parts=(date=new Date())=>Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(date).filter(p=>p.type!=='literal').map(p=>[p.type,p.value]));
@@ -83,8 +83,9 @@
     const todo=state.homework.filter(h=>!h.complete),done=state.homework.filter(h=>h.complete);
     const list=(homeworkTab==='todo'?todo:done).sort((a,b)=>a.due.localeCompare(b.due));
     const tools=selecting?`<div class="selection-tools"><span class="small muted">${selection.size} selected</span><button class="btn" data-action="bulk-done">Mark done</button><button class="btn" data-action="bulk-color">Color</button><button class="btn danger" data-action="bulk-trash">${icon('trash')}Delete</button><button class="btn primary" data-action="select-end">Done</button></div>`:`<div class="selection-tools"><span class="small faint">${list.length} assignments</span><button class="btn" data-action="select-start">${icon('check')}Select</button><button class="btn primary" data-action="hw-new">${icon('plus')}Add Homework</button></div>`;
-    const rows=list.length?list.map(h=>`<div class="homework-row" style="--assignment-color:${hex(h.color)?h.color:'#e0e0df'}"><span class="assignment-accent"></span>${selecting?'':`<button class="delete-icon" data-action="hw-trash" data-id="${esc(h.id)}" aria-label="Move ${esc(h.title)} to Trash">${icon('trash')}</button>`}<label class="check-hit"><input class="check" type="checkbox" data-change="${selecting?'select-hw':'complete-hw'}" data-id="${esc(h.id)}" ${selecting?selection.has(h.id)?'checked':'':h.complete?'checked':''} aria-label="${selecting?'Select':'Mark done'} ${esc(h.title)}"><span class="check-visual"></span></label><button class="homework-main ${h.complete?'completed':''}" data-action="hw-edit" data-id="${esc(h.id)}"><span class="row-title">${esc(h.title)}</span><span class="row-sub">${esc(h.subject||'Homework')} · ${dateTime(h.due)} · ${h.source==='google-classroom'?'Google Classroom':'Manual'}</span>${h.note?`<span class="row-note">${esc(h.note)}</span>`:''}</button>${h.complete?'<span class="pill">DONE</span>':badge(h)}${h.url&&!selecting?`<a class="btn shortcut" href="${esc(h.url)}" target="_blank" rel="noopener noreferrer">Open ${icon('external')}</a>`:''}</div>`).join(''):empty(homeworkTab==='todo'?'No homework to do. Connect Google Classroom or add an assignment manually.':'No completed homework. Uncheck it to move it back to To do.');
-    return header('Homework','Assignments from Google Classroom and manual entries.')+`<div class="homework-layout"><section class="card classroom-panel"><div class="card-head"><div class="card-title">${icon('check','card-icon')}<span class="micro">Google Classroom</span></div></div><p class="small muted">${CampusGoogle.connected()?`Connected${state.googleLastSync?` · Synced ${dateTime(state.googleLastSync)}`:""}`:"Google Classroom is not connected."}</p><button class="btn primary" data-action="google-info">${CampusGoogle.connected()?"Sync Google":"Connect Google"}</button></section><div class="assignments-panel"><div class="tabs homework-tabs"><button class="tab ${homeworkTab==='todo'?'active':''}" data-action="hw-tab" data-tab="todo">To do (${todo.length})</button><button class="tab ${homeworkTab==='done'?'active':''}" data-action="hw-tab" data-tab="done">Completed (${done.length})</button></div><div class="assignment-toolbar">${tools}</div><div class="assignment-list">${rows}</div></div></div>`;
+    const rows=list.length?list.map(h=>`<div class="homework-row" style="--assignment-color:${hex(h.color)?h.color:'#e0e0df'}"><span class="assignment-accent"></span>${selecting?'':`<button class="delete-icon" data-action="hw-trash" data-id="${esc(h.id)}" aria-label="Move ${esc(h.title)} to Trash">${icon('trash')}</button>`}<label class="check-hit"><input class="check" type="checkbox" data-change="${selecting?'select-hw':'complete-hw'}" data-id="${esc(h.id)}" ${selecting?selection.has(h.id)?'checked':'':h.complete?'checked':''} aria-label="${selecting?'Select':'Mark done'} ${esc(h.title)}"><span class="check-visual"></span></label><button class="homework-main ${h.complete?'completed':''}" data-action="hw-edit" data-id="${esc(h.id)}"><span class="row-title">${esc(h.title)}</span><span class="row-sub">${esc(h.subject||'Homework')} · ${dateTime(h.due)} · ${/google/i.test(h.source||'')?'Google Classroom':'Manual'}</span>${h.note?`<span class="row-note">${esc(h.note)}</span>`:''}</button>${h.complete?'<span class="pill">DONE</span>':badge(h)}${h.url&&!selecting?`<a class="btn shortcut" href="${esc(h.url)}" target="_blank" rel="noopener noreferrer">Open ${icon('external')}</a>`:''}</div>`).join(''):empty(homeworkTab==='todo'?'No homework to do. Connect Google Classroom or add an assignment manually.':'No completed homework. Uncheck it to move it back to To do.');
+    const reconnect=state.googleReconnectRequired&&!CampusGoogle.connected()?'<div class="notice">Google Classroom sign-in was not transferred from the Mac app. Connect Google here again to resume homework sync.</div>':'';
+    return header('Homework','Assignments from Google Classroom and manual entries.')+reconnect+`<div class="homework-layout"><section class="card classroom-panel"><div class="card-head"><div class="card-title">${icon('check','card-icon')}<span class="micro">Google Classroom</span></div></div><p class="small muted">${CampusGoogle.connected()?`Connected${state.googleLastSync?` · Synced ${dateTime(state.googleLastSync)}`:""}`:"Google Classroom is not connected."}</p><button class="btn primary" data-action="google-info">${CampusGoogle.connected()?"Sync Google":"Connect Google"}</button></section><div class="assignments-panel"><div class="tabs homework-tabs"><button class="tab ${homeworkTab==='todo'?'active':''}" data-action="hw-tab" data-tab="todo">To do (${todo.length})</button><button class="tab ${homeworkTab==='done'?'active':''}" data-action="hw-tab" data-tab="done">Completed (${done.length})</button></div><div class="assignment-toolbar">${tools}</div><div class="assignment-list">${rows}</div></div></div>`;
   }
   function calendarView(){
     const [year,month]=monthView.split('-').map(Number),first=new Date(Date.UTC(year,month-1,1,12));
@@ -137,17 +138,29 @@
   function menuWorker(){if(!('serviceWorker' in navigator)||!/^https?:$/.test(location.protocol))return Promise.resolve(null);return menuWorkerReady??=navigator.serviceWorker.register('./menu-sw.js').then(()=>navigator.serviceWorker.ready).then(registration=>registration.active).catch(()=>null)}
   async function cacheMenuImage(url){if(!/^https:\/\//i.test(url||''))return;const worker=await menuWorker();worker?.postMessage({type:'cache-menu-image',url})}
   async function refreshCafeteria(silent=false){try{let r;try{r=await fetch(`https://kisj.kr/our/${state.division.toLowerCase()}crawl.php`,{cache:'no-store'})}catch{throw Error('The cafeteria API blocks browser access (CORS).')}if(!r.ok)throw Error(`Cafeteria API returned HTTP ${r.status}.`);const data=await r.json(),urls=data.thisWeek?.length?data.thisWeek:data.nextWeek||[];if(!urls.length)throw Error('No menu image is published for this week or next week.');const entry=urls.find(x=>/kor|korean|kr|ko/i.test(JSON.stringify(x)))||urls[0],url=typeof entry==='string'?entry:Object.values(entry||{}).find(x=>typeof x==='string'&&x.startsWith('http'));if(!url)throw Error('The cafeteria API returned no usable image URL.');const imageURL=new URL(url,'https://kisj.kr/');if(imageURL.protocol!=='https:')throw Error('The cafeteria API returned an insecure image URL.');state.cafeteria[state.division]={image:imageURL.href,fetchedAt:new Date().toISOString()};cafeteriaStatus='';save();render();cacheMenuImage(imageURL.href);if(!silent)toast('Cafeteria menu updated.')}catch(error){cafeteriaStatus=error.message;if(page==='cafeteria')render();if(!silent)toast(cafeteriaStatus)}}
-  function putTrash(type,item,title){state.trash.unshift({id:uid(),type,item,title,deletedAt:new Date().toISOString()});save()}
+  const classroomKey=item=>item?.classroomKey || (item?.courseID && item?.courseworkID
+    ? `${item.courseID}:${item.courseworkID}` : item?.courseId && (item?.courseWorkId || item?.courseworkId)
+      ? `${item.courseId}:${item.courseWorkId || item.courseworkId}` : item?.id);
+  function putTrash(type,item,title){
+    state.trash.unshift({id:uid(),type,item,title,deletedAt:new Date().toISOString()});
+    if(type==='homework' && /google/i.test(item.source || '')){
+      state.dismissedClassroomKeys ||= [];
+      const key=classroomKey(item);
+      if(key&&!state.dismissedClassroomKeys.includes(key))state.dismissedClassroomKeys.push(key);
+    }
+    save();
+  }
   async function syncGoogleHomework(silent=false){
     if(!CampusGoogle.connected())return;
     try{
       const result=await CampusGoogle.homework();
-      const incoming=new Map(result.homework.map(item=>[item.id,item]));
-      const deleted=new Set(state.trash.filter(t=>t.type==='homework').map(t=>t.item?.id));
-      state.homework=state.homework.filter(item=>item.source!=='google-classroom'||incoming.has(item.id));
-      for(const item of incoming.values()){
-        if(deleted.has(item.id))continue;
-        const old=state.homework.find(h=>h.id===item.id);
+      const incoming=new Map(result.homework.map(item=>[classroomKey(item),item]));
+      const deleted=new Set([...(state.dismissedClassroomKeys || []),
+        ...state.trash.filter(t=>t.type==='homework').map(t=>classroomKey(t.item))]);
+      state.homework=state.homework.filter(item=>item.source!=='google-classroom'||incoming.has(classroomKey(item)));
+      for(const [key,item] of incoming){
+        if(deleted.has(key))continue;
+        const old=state.homework.find(h=>classroomKey(h)===key);
         if(old)Object.assign(old,item,{note:old.note||'',color:old.color||'#3c82c4',complete:old.complete});
         else state.homework.push({...item,note:'',color:'#3c82c4',complete:false});
       }
@@ -155,9 +168,16 @@
       save();render();if(!silent)toast('Google Classroom synced.');
     }catch(error){toast(error.message||'Google Classroom sync failed.')}
   }
-  window.addEventListener('campus-google-connected',()=>{render();syncGoogleHomework()});
+  window.addEventListener('campus-google-connected',()=>{state.googleReconnectRequired=false;save();render();syncGoogleHomework()});
   window.addEventListener('campus-google-error',event=>toast(event.detail));
-  function restoreTrash(id){const index=state.trash.findIndex(t=>t.id===id);if(index<0)return;const t=state.trash.splice(index,1)[0];if(t.type==='homework')state.homework.push(t.item);if(t.type==='event')state.events.push(t.item);if(t.type==='class'){const {key,block}=t.item;if(key.startsWith('custom:')){state.customDays[key.slice(7)]??={title:'Custom Day',classes:[]};state.customDays[key.slice(7)].classes.push(block)}else{state.schedules[key]??=[];state.schedules[key].push(block)}}save();render();toast('Item restored.')}
+  function restoreTrash(id){const index=state.trash.findIndex(t=>t.id===id);if(index<0)return;const t=state.trash.splice(index,1)[0];if(t.type==='homework'){
+    state.homework.push(t.item);
+    state.dismissedClassroomKeys=(state.dismissedClassroomKeys || []).filter(key=>key!==classroomKey(t.item));
+  }if(t.type==='event')state.events.push(t.item);if(t.type==='template'){
+    state.savedTemplates ||= [];state.savedTemplates.push(t.item);
+  }if(t.type==='class'){const {key,block}=t.item;if(key.startsWith('custom:')){state.customDays[key.slice(7)]??={title:'Custom Day',classes:[]};state.customDays[key.slice(7)].classes.push(block)}else if(key.startsWith('all:')){
+    for(const day of KEYS.filter(day=>day.endsWith(key.slice(4)))){state.schedules[day]??=[];state.schedules[day].push({...block,id:uid()})}
+  }else{state.schedules[key]??=[];state.schedules[key].push(block)}}save();render();toast('Item restored.')}
   document.addEventListener('paste',e=>{const target=e.target.closest('[data-paste]');if(!target)return;e.preventDefault();parsePaste(target.dataset.paste,e.clipboardData?.getData('text/html')||e.clipboardData?.getData('text/plain')||'')});
   document.addEventListener('change',async e=>{const t=e.target;if(t.classList.contains('sync-file')){const file=t.files?.[0];if(file){if(file.size>3_000_000)return toast('HTML file is too large.');parsePaste(t.dataset.kind,await file.text())}return}if(t.id==='appearance-select'){state.appearance=t.value;save();render()}else if(t.id==='settings-division'||t.id==='division-select'){state.division=t.value;save();render();refreshCalendar(true)}else if(t.id==='custom-date'){customDate=t.value;render()}else if(t.id==='backup-file'){const file=t.files?.[0];if(!file)return;try{const value=JSON.parse(await file.text());if(value.version!==1||!Array.isArray(value.homework)||!value.schedules||typeof value.schedules!=='object')throw Error('Invalid Campus backup');if(!confirm('Replace all local Campus data with this backup?'))return;state={...defaults(),...value};save();render();toast('Backup restored.')}catch(error){toast(error.message)}}else if(t.dataset.change==='complete-hw'){const h=state.homework.find(x=>x.id===t.dataset.id);if(h){h.complete=t.checked;save();render();toast(t.checked?'Homework completed. Open Completed to undo.':'Moved back to To do.')}}else if(t.dataset.change==='select-hw'){t.checked?selection.add(t.dataset.id):selection.delete(t.dataset.id);render()}});
   document.addEventListener('submit',e=>{e.preventDefault();const f=e.target,d=new FormData(f);if(f.id==='class-form'){const key=f.dataset.key,id=f.dataset.id,start=String(d.get('start')),end=String(d.get('end'));if(minutes(end)<=minutes(start))return toast('End time must be after start time.');const list=classList(key)||[];const item={id:id||uid(),subject:String(d.get('subject')).trim(),teacher:String(d.get('teacher')).trim(),room:String(d.get('room')).trim(),start,end,color:String(d.get('color'))};if(!item.subject)return toast('Enter a subject.');const index=list.findIndex(c=>c.id===id);index>=0?list[index]=item:list.push(item);if(key.startsWith('custom:')){const iso=key.slice(7);state.customDays[iso]??={title:'Custom Day',classes:[]};state.customDays[iso].classes=list}else state.schedules[key]=list;save();close();render();toast('Class saved.')}else if(f.id==='homework-form'){const id=f.dataset.id,due=String(d.get('due'));if(!due)return toast('Choose a due date.');const url=String(d.get('url')||'').trim();if(url&&!/^https?:\/\//i.test(url))return toast('Shortcut must be an http or https address.');const item={id:id||uid(),title:String(d.get('title')).trim(),subject:String(d.get('subject')).trim(),due:new Date(`${due}:00+09:00`).toISOString(),url,note:String(d.get('note')).trim(),color:String(d.get('color')),complete:state.homework.find(h=>h.id===id)?.complete||false};const index=state.homework.findIndex(h=>h.id===id);index>=0?state.homework[index]=item:state.homework.push(item);save();close();render();toast('Homework saved.')}else if(f.id==='event-form'){const id=f.dataset.id,remote=f.dataset.remote==='true',title=String(d.get('title')).trim(),color=String(d.get('color')),note=String(d.get('note')).trim();if(remote){state.eventOverrides[id]={title,color,note}}else{const start=validDate(d.get('start')),end=d.get('end')?validDate(d.get('end')):'';if(!start||(end&&end<start))return toast('Check the event dates.');const item={id:id||uid(),title,type:String(d.get('type')),start,end,color,note,remote:false},index=state.events.findIndex(x=>x.id===id);index>=0?state.events[index]=item:state.events.push(item)}save();close();render();toast('Event saved.')}else if(f.id==='club-form'){const club={enabled:Boolean(d.get('enabled')),name:String(d.get('name')).trim(),days:d.getAll('day').map(Number),start:String(d.get('start')),end:String(d.get('end'))};if(minutes(club.end)<=minutes(club.start))return toast('Club end time must be after its start.');state.club=club;save();render();toast('Club saved.')}});
@@ -171,8 +191,9 @@
         const previous=state;
         state=CampusTransfer.toWebState(pendingTransfer,state);
         if(!save()){state=previous;break}
+        CampusGoogle.disconnect();
         try{CampusTransfer.markUsed(pendingTransferNonce)}catch{}
-        pendingTransfer=null;pendingTransferNonce=null;close();go('today');toast('Mac data imported. Google sign-in stays separate.');
+        pendingTransfer=null;pendingTransferNonce=null;close();go('homework');toast('Mac data imported. Connect Google Classroom again to resume syncing.');
       }catch(error){toast(error.message)}
       break;
     }
@@ -218,24 +239,31 @@
     case 'trash-restore':restoreTrash(id);break;
     case 'trash-delete':state.trash=state.trash.filter(x=>x.id!==id);save();render();break;
     case 'trash-clear':if(confirm('Permanently delete everything in Trash?')){state.trash=[];save();render()}break;
-    case 'reset-data':if(confirm('Delete all Campus data saved in this browser? This cannot be undone.')){localStorage.removeItem(KEY);state=defaults();go('today');toast('Local data deleted.')}break;
+    case 'reset-data':if(confirm('Delete all Campus data saved in this browser, including Google sign-in? This cannot be undone.')){localStorage.removeItem(KEY);CampusGoogle.disconnect();state=defaults();go('today');toast('Local data deleted.')}break;
     case 'export-data':{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=`campus-backup-${dateKey()}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),5000);break}
   }});
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('#modal-root').firstChild)close()});
   window.addEventListener('hashchange',()=>{const next=location.hash.slice(1);if((pages.some(p=>p[0]===next)||next==='settings')&&next!==page){page=next;render()}});
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(state.appearance==='system')theme()});
   render();
-  const receivedTransfer=CampusTransfer.takeIncoming();
-  if(receivedTransfer?.error)toast(receivedTransfer.error);
-  if(receivedTransfer?.snapshot){
+  function presentTransfer(receivedTransfer){
+    if(receivedTransfer?.error){toast(receivedTransfer.error);return}
+    if(!receivedTransfer?.snapshot)return;
     pendingTransfer=receivedTransfer.snapshot;
     pendingTransferNonce=receivedTransfer.nonce;
     const snapshot=pendingTransfer;
     const count=Object.values(snapshot.schedules).reduce((total,classes)=>total+classes.length,0);
     modal('Import from Mac app?',
-      `${receivedTransfer.unrequested?'This browser did not start the transfer. Continue only if you just approved sending from your Mac. ':''}This will replace your browser schedules, homework, custom days, club and personal calendar events. Google sign-in and cached images are not transferred.`,
-      `<div class="notice">${count} classes · ${snapshot.homework.length} homework items · ${snapshot.events.length} calendar events · ${Object.keys(snapshot.customDays).length} custom days</div><div class="form-actions"><button class="btn" data-action="close">Cancel</button><button class="btn primary" data-action="transfer-apply">Replace browser data</button></div>`);
+      `${receivedTransfer.unrequested?'This browser did not start the transfer. Continue only if you just approved sending from your Mac. ':''}This will replace your browser schedules, homework, Trash, custom days, club and personal calendar events. The browser's Google Classroom sign-in will be disconnected; sign in again here after import.`,
+      `<div class="notice">${count} classes · ${snapshot.homework.length} homework items · ${snapshot.trash?.length || 0} Trash items · ${snapshot.events.length} calendar events · ${Object.keys(snapshot.customDays).length} custom days</div><div class="form-actions"><button class="btn" data-action="close">Cancel</button><button class="btn primary" data-action="transfer-apply">Replace browser data</button></div>`);
   }
+  presentTransfer(CampusTransfer.takeIncoming());
+  if(CampusTransfer.hasPending())modal('Receiving Mac data…',
+    'Campus is retrieving your encrypted transfer. This can take up to a minute.',
+    '<div class="notice">Keep this tab open while the transfer arrives.</div>');
+  CampusTransfer.receivePending().then(received=>{
+    if(received){close();presentTransfer(received)}
+  });
   if(!state.remoteUpdated||Date.now()-new Date(state.remoteUpdated).getTime()>3600000)refreshCalendar(true);
   menuWorker().then(worker=>{if(worker)Object.values(state.cafeteria).forEach(menu=>cacheMenuImage(menu?.image))});
   if(state.setupComplete)refreshCafeteria(true);

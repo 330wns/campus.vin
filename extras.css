@@ -129,6 +129,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .nav-badge { font-size: 10px; font-variant-numeric: tabular-nums; padding: 1px 6px; background: var(--campus-fill); }
 .sidebar-bottom { border-top: 0; }
 .local-note { display: none; }
+.sidebar-legal { display: flex; gap: 14px; padding: 9px 12px 0; font-size: 11px; color: #858990; }
+.sidebar-legal a { text-decoration: none; }
+.sidebar-legal a:hover { text-decoration: underline; }
 .topbar { height: 48px; flex: none; position: relative; padding: 0 25px; background: rgba(255,255,255,.72); border-bottom: 1px solid var(--campus-line); }
 .topbar-title { font-size: 13px; font-weight: 650; letter-spacing: 0; }
 .topbar-meta { display: none; }

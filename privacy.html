@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="How Campus handles data in the Mac app and web version.">
+  <link rel="icon" type="image/png" href="campus-favicon-32.png">
+  <link rel="stylesheet" href="legal.css">
+  <title>Privacy Policy · Campus</title>
+</head>
+<body>
+  <div class="legal-shell">
+    <nav class="legal-nav" aria-label="Site navigation">
+      <a class="brand" href="/"><img src="campus-icon-64.png" alt="">Campus</a>
+      <div class="legal-links"><a href="/">Open Campus</a><a href="privacy.html" aria-current="page">Privacy</a><a href="terms.html">Terms</a></div>
+    </nav>
+    <header>
+      <p class="eyebrow">Campus · Legal</p>
+      <h1>Privacy Policy</h1>
+      <p class="effective">Effective September 25, 2026</p>
+    </header>
+    <main>
+      <section>
+        <h2>What this covers</h2>
+        <p>This policy describes the Campus macOS app and the Campus web app at campus.vin. Campus brings school schedules, homework, calendar events, club times and cafeteria information together. Connecting Google Classroom and importing from PowerSchool are optional.</p>
+      </section>
+      <section>
+        <h2>Information kept on your device</h2>
+        <p>Campus stores schedules, homework and notes, completion state, deleted items in Trash, calendar changes, club settings, preferences and cached cafeteria information locally. The Mac app uses its Application Support folder, including for Google OAuth tokens; the web app uses browser storage, including for Google OAuth tokens when you connect Google Classroom. Clearing browser storage or resetting the app removes locally stored data, but may not remove information held by third-party services.</p>
+      </section>
+      <section>
+        <h2>Google Classroom</h2>
+        <p>With your permission, Campus accesses your Classroom courses, coursework and submission information to show assignments and deadlines. The web and Mac versions use separate Google sign-ins. Campus does not submit work or change grades. OAuth exchange and refresh requests use <code>kisj.pythonanywhere.com</code>; the web version also requests Classroom homework through that service. Google authorization data is used only for the Classroom feature and is not included in app-to-web transfers. You can revoke access in your Google Account; the Mac app also offers Disconnect, while clearing Campus site data removes web tokens stored in the browser.</p>
+        <p>Campus's use of information received from Google APIs is intended to follow the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including its Limited Use requirements. Campus does not sell Google user data or use it for advertising.</p>
+      </section>
+      <section>
+        <h2>PowerSchool, calendar and cafeteria</h2>
+        <p>On Mac, PowerSchool sync reads schedule pages through Chrome after you choose to sync; your PowerSchool password and Chrome cookies are not imported into Campus. On the web, PowerSchool import processes HTML you paste or select in your browser. Campus also requests school calendar and cafeteria data from their published endpoints. Those services may receive ordinary request information such as an IP address and request time.</p>
+      </section>
+      <section>
+        <h2>Moving data from Mac to web</h2>
+        <p>If you approve an app-to-web transfer, Campus encrypts a snapshot of schedules, homework, Trash, club and personal calendar data on your Mac and uploads the encrypted copy to Cloudflare Workers KV. The copy expires after five minutes, and deletion is requested when the web app retrieves it. The decryption key is placed in the browser URL fragment, not sent to the transfer server. Anyone who obtains that full transfer link before it is used may be able to read the data, so do not share it. After you confirm import, the data is stored in your browser. Google sign-in credentials and cached cafeteria images are not transferred; you must connect Google Classroom again in the web app.</p>
+      </section>
+      <section>
+        <h2>Retention and security</h2>
+        <p>Mac Trash entries are eligible for removal after 30 days when the app starts. Web Trash remains until you delete it or clear browser data. The transfer server keeps only temporary ciphertext as described above; Cloudflare may process technical request information to operate the service. Campus uses HTTPS for network transfer and AES-256-GCM for app-to-web payload encryption. Browser storage and any network service still carry risk, so protect your device and avoid sharing transfer links.</p>
+      </section>
+      <section>
+        <h2>Contact and changes</h2>
+        <p>For privacy questions, contact <a href="mailto:jay@kisj.space">jay@kisj.space</a> or <a href="mailto:jacob@kisj.space">jacob@kisj.space</a>. We may update this policy if the service changes; the effective date above identifies the current version.</p>
+      </section>
+    </main>
+    <footer><span>© 2026 Campus</span><div class="legal-links"><a href="terms.html">Terms</a><a href="privacy.html" aria-current="page">Privacy</a></div></footer>
+  </div>
+</body>
+</html>
