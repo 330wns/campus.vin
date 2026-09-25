@@ -159,7 +159,7 @@
         ...state.trash.filter(t=>t.type==='homework').map(t=>classroomKey(t.item))]);
       state.homework=state.homework.filter(item=>item.source!=='google-classroom'||incoming.has(classroomKey(item)));
       for(const [key,item] of incoming){
-        if(deleted.has(key))continue;
+        if(!key||deleted.has(key))continue;
         const old=state.homework.find(h=>classroomKey(h)===key);
         if(old)Object.assign(old,item,{note:old.note||'',color:old.color||'#3c82c4',complete:old.complete});
         else state.homework.push({...item,note:'',color:'#3c82c4',complete:false});
