@@ -190,6 +190,8 @@
       try{
         const previous=state;
         state=CampusTransfer.toWebState(pendingTransfer,state);
+        state.setupComplete=true;
+        state.setupStep=2;
         if(!save()){state=previous;break}
         CampusGoogle.disconnect();
         try{CampusTransfer.markUsed(pendingTransferNonce)}catch{}
