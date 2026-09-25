@@ -156,7 +156,9 @@
         id: String(item.id || ''), title: item.title || '', subject: item.subject || '',
         due: item.due, complete: Boolean(item.complete), note: item.note || '',
         color: item.color || null, url: item.url || null,
-        source: /google/i.test(item.source || '') ? 'google-classroom' : 'manual'
+        source: /google|classroom/i.test(item.source || '') ? 'google-classroom' : 'manual',
+        courseID: item.courseID || item.courseId || null,
+        courseworkID: item.courseworkID || item.courseWorkId || item.courseworkId || null
       })),
       events: (state.events || []).filter(item => !item.remote).map(item => ({
         id: String(item.id || ''), title: item.title || '', type: item.type,
@@ -189,7 +191,8 @@
     const nativeHomework = item => ({id:item.id, title:item.title, subject:item.subject,
       due:item.dueDate, complete:item.isComplete, note:item.note || '',
       color:item.colorHex || '#3c82c4', url:item.url || '',
-      source:item.source === 'Google Classroom' ? 'transferred-google-classroom' : 'manual',
+      source:/google|classroom/i.test(item.source || '') ? 'transferred-google-classroom' : 'manual',
+      courseID:item.courseID || null, courseworkID:item.courseworkID || null,
       classroomKey:item.courseID && item.courseworkID ? `${item.courseID}:${item.courseworkID}` : null});
     const nativeEvent = item => ({id:item.id, title:item.title,
       type:item.scheduleEffect || (item.isNoSchool ? 'break' : 'info'),
@@ -229,6 +232,7 @@
         due: item.due, complete: item.complete, note: item.note, color: item.color || '#3c82c4',
         url: item.url || '', source: item.source === 'google-classroom'
           ? 'transferred-google-classroom' : 'manual',
+        courseID:item.courseID || null, courseworkID:item.courseworkID || null,
         classroomKey:item.courseID && item.courseworkID ? `${item.courseID}:${item.courseworkID}` : null
       })),
       events: snapshot.events.map(item => ({id: item.id || crypto.randomUUID(),
