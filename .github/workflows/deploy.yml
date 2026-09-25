@@ -39,7 +39,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           projects=$(npx --yes wrangler@4 pages project list --json)
-          if ! jq -e '.[] | select(.name == "campus-vin")' <<< "$projects" > /dev/null; then
+          if ! jq -e '.[] | select((.name // .["Project Name"]) == "campus-vin")' <<< "$projects" > /dev/null; then
             npx --yes wrangler@4 pages project create campus-vin --production-branch main
           fi
       - name: Deploy
