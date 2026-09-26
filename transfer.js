@@ -118,7 +118,7 @@
   // Clipboard transfers carry everything; this only guards against absurd input.
   const MAX_CLIPBOARD_BYTES = 10000000;
   const CLIPBOARD_PREFIX = 'CAMPUS-TRANSFER-1:';
-  const TRUNCATED = 'The transfer link was cut off before it reached Campus. Nothing was changed. Use Send All via Clipboard in the Mac app\'s Settings instead.';
+  const TRUNCATED = 'The transfer link was cut off before it reached Campus. Nothing was changed.';
   const toBase64Url = bytes => {
     let binary = '';
     for (let offset = 0; offset < bytes.length; offset += 8192) {
@@ -381,25 +381,11 @@
       Object.keys(snapshot.customDays).length);
   }
 
-  // "Send All via Clipboard": everything, nothing left out, as text to paste into the Mac app.
-  async function clipboardCode(state) {
-    const snapshot = fromWebState(state);
-    if (!hasTransferableData(snapshot)) throw Error('There is no Campus data in this browser to send yet. Add a schedule, homework, event or club first.');
-    const packed = await pack(snapshot, MAX_CLIPBOARD_BYTES);
-    if (!packed) throw Error('There is too much data to transfer. Nothing was changed.');
-    return CLIPBOARD_PREFIX + packed;
-  }
+  // Campus for Mac copies everything, nothing left out, as a code to paste here.
   async function fromClipboardCode(text) {
     const code = String(text || '').trim();
-    if (!code.startsWith(CLIPBOARD_PREFIX)) throw Error("That isn't Campus data. In Campus for Mac, choose Send All via Clipboard, then paste here.");
+    if (!code.startsWith(CLIPBOARD_PREFIX)) throw Error("That isn't Campus data. Let Campus for Mac copy your data first, then paste here.");
     return decode(code.slice(CLIPBOARD_PREFIX.length), MAX_CLIPBOARD_BYTES);
-  }
-
-  // The Mac app opens #campus-paste after copying everything to the clipboard.
-  let pasteRequested = false;
-  if (location.hash === '#campus-paste') {
-    pasteRequested = true;
-    history.replaceState(null, '', `${location.pathname}${location.search}#today`);
   }
 
   let incomingLink = null;
@@ -458,14 +444,15 @@
     location.href = `campus://export?callback=${encodeURIComponent(callback)}&nonce=${encodeURIComponent(nonce)}`;
   }
 
-  async function sendToApp(state) {
+  // The campus:// link for the Mac app, and how many older items had to be left out of it.
+  async function linkForApp(state) {
     const snapshot = fromWebState(state);
     if (!hasTransferableData(snapshot)) throw Error('There is no Campus data in this browser to send yet. Add a schedule, homework, event or club first.');
-    const {payload} = await encode(snapshot);
-    location.href = `campus://import?z=${payload}`;
+    const {payload, omitted} = await encode(snapshot);
+    return {url: `campus://import?z=${payload}`, omitted};
   }
 
   window.CampusTransfer = {encode, decode, validate, fromWebState, toWebState,
-    receiveIncoming, markUsed, requestAppExport, sendToApp, clipboardCode, fromClipboardCode,
-    takePasteRequest: () => { const requested = pasteRequested; pasteRequested = false; return requested; }};
+    receiveIncoming, markUsed, requestAppExport, linkForApp, fromClipboardCode,
+    requestAppCopy: () => { location.href = 'campus://copy'; }};
 })();

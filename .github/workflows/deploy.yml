@@ -25,6 +25,11 @@ jobs:
         run: |
           mkdir dist
           cp index.html privacy.html terms.html legal.css styles.css extras.css app.js powerschool.js google.js transfer.js menu-sw.js campus-icon-64.png campus-favicon-32.png dist/
+          # Scripts and styles are cached by browsers for hours; a per-deploy version in their URLs
+          # makes every deploy load at once and keeps old and new files from mixing.
+          version="${GITHUB_SHA::8}"
+          sed -i -E "s/(href|src)=\"(styles|extras|legal)\.css\"/\1=\"\2.css?v=$version\"/g; s/src=\"(powerschool|google|transfer|app)\.js\"/src=\"\1.js?v=$version\"/g" dist/index.html dist/privacy.html dist/terms.html
+          grep -q "app.js?v=$version" dist/index.html
       - name: Verify Cloudflare credentials
         env:
           CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
