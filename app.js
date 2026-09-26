@@ -228,7 +228,12 @@
     const row = ([id, title, symbol]) => `<button class="nav-item ${page === id ? 'active' : ''}" data-nav="${id}">${icon(symbol, 'nav-icon')}<span>${title}</span>${id === 'trash' && state.trash.length ? `<span class="nav-badge">${state.trash.length}</span>` : ''}</button>`;
     $('#navigation').innerHTML = row(pages[0]) + `<div class="nav-heading">${micro('Plan')}</div>` + pages.slice(1, 4).map(row).join('') + `<div class="nav-heading">${micro('School')}</div>` + pages.slice(4).map(row).join('');
     $('#settings-button').innerHTML = icon('gear', 'nav-icon') + '<span>Settings</span>';
+    $('#app-promo').innerHTML = appPromoHidden() ? '' : `<div class="app-promo"><a class="app-promo-link" href="${APP_DOWNLOAD}"><img src="campus-icon-64.png" alt=""><span><span class="app-promo-title">Campus for Mac</span><span class="app-promo-sub">Download the app for the menu bar, local calendar and more</span></span></a><button type="button" class="app-promo-close" data-action="hide-app-promo" aria-label="Don't show again">${icon('xmark')}</button></div>`;
   }
+  // The Mac app promo stays hidden once someone closes it or already moves data to or from the app.
+  const APP_DOWNLOAD = 'https://kisj.space/download', APP_PROMO_KEY = 'campus.web.appPromoHidden';
+  function appPromoHidden() { try { return localStorage.getItem(APP_PROMO_KEY) === '1'; } catch { return false; } }
+  function hideAppPromo() { try { localStorage.setItem(APP_PROMO_KEY, '1'); } catch {} if (state.setupComplete) nav(); }
   function render() {
     theme();
     const focus = captureFocus();
@@ -792,7 +797,8 @@
       case 'close': closeLayer(); if (!layers.length) render(); break;
       case 'alert': { const layer = layers.at(-1); closeLayer(); layer.buttons[Number(t.dataset.index)]?.run?.(); break; }
       case 'import-from-app': try { CampusTransfer.requestAppExport(); } catch (error) { toast(error.message); } break;
-      case 'send-to-app': CampusTransfer.linkForApp(state).then(({url}) => { location.href = url; }, error => toast(error.message)); break;
+      case 'hide-app-promo': hideAppPromo(); break;
+      case 'send-to-app': hideAppPromo(); CampusTransfer.linkForApp(state).then(({url}) => { location.href = url; }, error => toast(error.message)); break;
       case 'import-via-clipboard': importViaClipboard(); break;
 
       case 'appearance': state.appearance = value; save(); render(); break;
@@ -899,6 +905,7 @@
       if (!save()) { state = previous; return; }
       CampusGoogle.disconnect();
       if (pendingTransferNonce) try { CampusTransfer.markUsed(pendingTransferNonce); } catch {}
+      hideAppPromo();
       pendingTransfer = null; pendingTransferNonce = null; closeAllLayers(); go('homework'); toast('Mac data imported. Connect Google Classroom again to resume syncing.');
     } catch (error) { toast(error.message); }
   }
