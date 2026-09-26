@@ -551,13 +551,14 @@
   }
 
   // Network refreshes
+  const isOffline = () => navigator.onLine === false;
   function parseSet(text, source) { const rows = []; for (const obj of text.match(/\{[^{}]{0,1000}\}/g) || []) { const f = {}; for (const m of obj.matchAll(/['"]?(type|start|end|name|color|id)['"]?\s*:\s*(['"])(.*?)\2/g)) f[m[1]] = m[3]; const start = validDate(f.start), end = validDate(f.end || f.start); if (!start || !end || end < start || !['break', 'half', 'info', 'late'].includes(f.type) || !f.name) continue; rows.push({id: `remote:${source}:${f.id || `${f.type}:${start}:${end}:${f.name}`}`, title: f.name, type: f.type, start, end: end === start ? '' : end, color: hex(f.color) ? f.color : '#303234', note: '', remote: true}); } return rows; }
   async function refreshCalendar(silent = false) {
     calendarLoading = true; if (page === 'calendar') render();
     try {
       const sources = ['global', state.division.toLowerCase()], result = await Promise.all(sources.map(async source => { const r = await fetch(`https://kisj.space/${source}.set`, {cache: 'no-store'}); if (!r.ok) throw Error(`${source}.set: HTTP ${r.status}`); return parseSet(await r.text(), source); }));
       state.remoteEvents = result.flat(); state.remoteUpdated = new Date().toISOString(); calendarError = ''; save();
-    } catch (e) { calendarError = `Calendar update failed: ${e.message}. Saved dates are still shown.`; if (!silent) toast(calendarError); }
+    } catch (e) { calendarError = isOffline() ? "You're offline. Saved dates are still shown." : `Calendar update failed: ${e.message}. Saved dates are still shown.`; if (!silent) toast(calendarError); }
     calendarLoading = false;
     if (['calendar', 'today', 'schedule'].includes(page) && !sheetOpen()) render();
   }
@@ -578,7 +579,7 @@
       if (imageURL.protocol !== 'https:') throw Error('The cafeteria API returned an insecure image URL.');
       state.cafeteria[state.division] = {image: imageURL.href, fetchedAt: new Date().toISOString()};
       cafeteriaError = ''; save(); cacheMenuImage(imageURL.href);
-    } catch (error) { cafeteriaError = error.message; if (!silent) toast(cafeteriaError); }
+    } catch (error) { cafeteriaError = isOffline() ? "You're offline. The last saved menu is shown." : error.message; if (!silent) toast(cafeteriaError); }
     cafeteriaLoading = false;
     if (['cafeteria', 'today'].includes(page) && !sheetOpen()) render();
   }
@@ -625,7 +626,7 @@
       state.googleLastSync = result.syncedAt || new Date().toISOString();
       classroomStatus = `Synced ${result.homework.length} Classroom assignments.`;
       save();
-    } catch (error) { classroomError = error.message || 'Google Classroom sync failed.'; classroomStatus = 'Google Classroom sync failed.'; if (!silent) toast(classroomError); }
+    } catch (error) { classroomError = isOffline() ? "You're offline. Classroom will sync when you're back online." : error.message || 'Google Classroom sync failed.'; classroomStatus = 'Google Classroom sync failed.'; if (!silent) toast(classroomError); }
     syncingClassroom = false;
     if (!sheetOpen()) render();
   }
@@ -934,6 +935,13 @@
   menuWorker().then(worker => { if (worker) Object.values(state.cafeteria).forEach(menuImage => cacheMenuImage(menuImage?.image)); });
   if (state.setupComplete) refreshCafeteria(true);
   if (state.setupComplete && CampusGoogle.connected()) syncGoogleHomework(true);
+  // Anything that failed while offline refreshes as soon as the connection is back.
+  window.addEventListener('online', () => {
+    refreshCalendar(true);
+    if (!state.setupComplete) return;
+    refreshCafeteria(true);
+    if (CampusGoogle.connected()) syncGoogleHomework(true);
+  });
   setInterval(() => {
     if (page === 'today' && state.setupComplete && !sheetOpen()) { render(); return; }
     for (const el of document.querySelectorAll('[data-badge]')) {
