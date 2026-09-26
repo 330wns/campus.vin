@@ -497,9 +497,20 @@
     return `<div class="page about-page">${icon('grad', 'about-icon')}<h1>Campus</h1><p class="about-tagline">School schedule management in one place.</p>${pill('KISJ')}<p>Developed by Jacob &amp; Jay</p><p>Thanks to Emil Kowalski, for apple-design</p><p class="caption faint">Questions or suggestions: jay@kisj.space · jacob@kisj.space</p><p class="caption2 faint mono">Campus Web</p></div>`;
   }
 
+  // Paste a "Send All via Clipboard" code from the Mac app.
+  let pasteError = '';
+  function pasteSheet() {
+    return `<div class="paste-sheet"><div class="paste-sheet-head"><h2 class="display-22">Paste from Campus for Mac</h2>${iconButton('Close', 'xmark', 'close')}</div><p class="subheadline sub">In Campus for Mac, choose <strong>Send All via Clipboard…</strong>. Then click the box below and press ⌘V (or Ctrl+V). Everything is imported, with nothing left out; you'll be asked before anything is replaced.</p><textarea class="paste-zone" data-paste-transfer data-fk="paste-transfer" aria-label="Paste Campus data" placeholder="Click here and press ⌘V"></textarea>${pasteError ? notice(pasteError, 'warn') : ''}</div>`;
+  }
+  function openPasteSheet() {
+    pasteError = '';
+    openSheet(pasteSheet, 'paste');
+    requestAnimationFrame(() => document.querySelector('[data-paste-transfer]')?.focus());
+  }
+
   // Settings (CampusSettingsView)
   function settingsSheet() {
-    return `<div class="settings-sheet"><div class="sheet-scroll settings-body"><div class="settings-head"><h2 class="display-24">Appearance</h2><div class="subheadline sub">Make Campus feel at home in your browser.</div></div><section class="card settings-card"><div class="settings-mode">${icon('halfCircle', 'settings-mode-icon')}<div><div class="headline">Color mode</div><div class="caption sub">Applies to every Campus page in this browser.</div></div></div>${segmented([['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], state.appearance, 'appearance')}<div class="caption sub">${state.appearance === 'system' ? 'Follows your device’s appearance automatically.' : 'Your choice is saved for the next time you open Campus.'}</div></section><section class="card settings-card"><div class="headline label-line">${icon('transfer')}Transfer with Campus for Mac</div><div class="caption sub">Move schedules, homework, Trash, custom days, club and personal calendar events between this browser and the Mac app. Each side asks before replacing anything. Google authorization and image caches stay on their original device.</div><div class="stacked-buttons">${btn('Import from Mac app…', {action: 'import-from-app', sym: 'download'})}${btn('Send to Mac app…', {action: 'send-to-app', sym: 'arrowUpRight'})}</div></section><section class="card settings-card"><div class="headline label-line">${icon('drive')}Local Data</div><div class="caption sub">Permanently removes schedules, homework, calendar changes, cafeteria cache, Google Classroom authorization, Trash, and Campus preferences from this browser.</div><div class="stacked-buttons">${btn('Export Backup…', {action: 'export-data', sym: 'upload'})}<label class="btn outline" for="backup-file">${icon('download')}<span>Import Backup…</span></label><input id="backup-file" type="file" accept="application/json,.json" hidden></div>${btn('Delete All Data…', {action: 'reset-data', kind: 'bordered-destructive'})}</section></div><div class="sheet-footer"><span class="spacer"></span>${btn('Done', {action: 'close', kind: 'prominent'})}</div></div>`;
+    return `<div class="settings-sheet"><div class="sheet-scroll settings-body"><div class="settings-head"><h2 class="display-24">Appearance</h2><div class="subheadline sub">Make Campus feel at home in your browser.</div></div><section class="card settings-card"><div class="settings-mode">${icon('halfCircle', 'settings-mode-icon')}<div><div class="headline">Color mode</div><div class="caption sub">Applies to every Campus page in this browser.</div></div></div>${segmented([['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], state.appearance, 'appearance')}<div class="caption sub">${state.appearance === 'system' ? 'Follows your device’s appearance automatically.' : 'Your choice is saved for the next time you open Campus.'}</div></section><section class="card settings-card"><div class="headline label-line">${icon('transfer')}Transfer with Campus for Mac</div><div class="caption sub">Move schedules, homework, Trash, custom days, club and personal calendar events between this browser and the Mac app. Each side asks before replacing anything. Google authorization and image caches stay on their original device.</div><div class="stacked-buttons">${btn('Import from Mac app…', {action: 'import-from-app', sym: 'download'})}${btn('Send to Mac app…', {action: 'send-to-app', sym: 'arrowUpRight'})}${btn('Send All via Clipboard…', {action: 'copy-all-to-app', sym: 'stack', title: 'Copies everything, with nothing left out, and opens the Mac app'})}${btn('Paste from Mac…', {action: 'paste-from-app', sym: 'download', title: 'Imports data copied with Send All via Clipboard in the Mac app'})}</div></section><section class="card settings-card"><div class="headline label-line">${icon('drive')}Local Data</div><div class="caption sub">Permanently removes schedules, homework, calendar changes, cafeteria cache, Google Classroom authorization, Trash, and Campus preferences from this browser.</div><div class="stacked-buttons">${btn('Export Backup…', {action: 'export-data', sym: 'upload'})}<label class="btn outline" for="backup-file">${icon('download')}<span>Import Backup…</span></label><input id="backup-file" type="file" accept="application/json,.json" hidden></div>${btn('Delete All Data…', {action: 'reset-data', kind: 'bordered-destructive'})}</section></div><div class="sheet-footer"><span class="spacer"></span>${btn('Done', {action: 'close', kind: 'prominent'})}</div></div>`;
   }
 
   // Onboarding (CampusOnboardingView)
@@ -704,6 +715,14 @@
   document.addEventListener('pointercancel', () => { menuDrag?.view.classList.remove('dragging'); menuDrag = null; });
 
   // Events
+  document.addEventListener('paste', e => {
+    if (!e.target.closest('[data-paste-transfer]')) return;
+    e.preventDefault();
+    CampusTransfer.fromClipboardCode(e.clipboardData?.getData('text/plain') || '').then(snapshot => {
+      closeLayer();
+      presentTransfer({snapshot, error: null, unrequested: false, nonce: null});
+    }, error => { pasteError = error.message; drawLayers(); });
+  });
   document.addEventListener('paste', e => { const target = e.target.closest('[data-paste]'); if (!target) return; e.preventDefault(); parsePaste(target.dataset.paste, e.clipboardData?.getData('text/html') || e.clipboardData?.getData('text/plain') || ''); });
   document.addEventListener('input', e => {
     const t = e.target, bind = t.dataset.bind;
@@ -757,6 +776,19 @@
       case 'alert': { const layer = layers.at(-1); closeLayer(); layer.buttons[Number(t.dataset.index)]?.run?.(); break; }
       case 'import-from-app': try { CampusTransfer.requestAppExport(); } catch (error) { toast(error.message); } break;
       case 'send-to-app': CampusTransfer.sendToApp(state).catch(error => toast(error.message)); break;
+      case 'copy-all-to-app': {
+        // Start the clipboard write inside the click so browsers keep the user gesture.
+        const code = CampusTransfer.clipboardCode(state);
+        const copied = window.ClipboardItem && navigator.clipboard?.write
+          ? navigator.clipboard.write([new ClipboardItem({'text/plain': code.then(text => new Blob([text], {type: 'text/plain'}))})])
+          : code.then(text => navigator.clipboard.writeText(text));
+        Promise.all([code, copied]).then(() => {
+          toast('Copied everything. Campus for Mac will ask before importing.');
+          location.href = 'campus://paste';
+        }, error => openAlert('Campus transfer failed', error.message || 'Could not copy to the clipboard.', [{label: 'OK', role: 'default'}]));
+        break;
+      }
+      case 'paste-from-app': openPasteSheet(); break;
       case 'appearance': state.appearance = value; save(); render(); break;
       case 'setup-division': case 'division': state.division = value; if (a === 'setup-division') state.club.enabled = value === 'MS'; save(); render(); refreshCalendar(true); if (a === 'division') refreshCafeteria(true); break;
       case 'setup-next': if (setupStep() === 0) state.club.enabled = state.division === 'MS'; state.setupStep = Math.min(3, setupStep() + 1); save(); render(); break;
@@ -859,7 +891,7 @@
       state.setupComplete = true; state.setupStep = 3;
       if (!save()) { state = previous; return; }
       CampusGoogle.disconnect();
-      try { CampusTransfer.markUsed(pendingTransferNonce); } catch {}
+      if (pendingTransferNonce) try { CampusTransfer.markUsed(pendingTransferNonce); } catch {}
       pendingTransfer = null; pendingTransferNonce = null; closeAllLayers(); go('homework'); toast('Mac data imported. Connect Google Classroom again to resume syncing.');
     } catch (error) { toast(error.message); }
   }
@@ -870,12 +902,13 @@
     pendingTransferNonce = receivedTransfer.nonce;
     const snapshot = pendingTransfer;
     const count = Object.values(snapshot.schedules).reduce((total, classes) => total + classes.length, 0);
-    const omitted = Number(snapshot.omitted) > 0 ? ` ${snapshot.omitted} older items were left out to fit the transfer link.` : '';
+    const omitted = Number(snapshot.omitted) > 0 ? ` ${snapshot.omitted} older items were left out to fit the transfer link. To move everything, cancel and use Send All via Clipboard in the Mac app's Settings.` : '';
     openAlert('Import from Campus for Mac?',
       `${receivedTransfer.unrequested ? 'This browser did not start the transfer. Continue only if you just approved sending from your Mac. ' : ''}Replace this browser's schedules, homework, Trash, custom days, club and personal calendar events with ${count} classes, ${snapshot.homework.length} homework items, ${snapshot.trash?.length || 0} Trash items, ${snapshot.events.length} calendar events and ${Object.keys(snapshot.customDays).length} custom days. Google sign-in will be disconnected; sign in again here after import.${omitted}`,
       [{label: 'Replace Data', role: 'default destructive', run: applyTransfer}, {label: 'Cancel', run: () => { pendingTransfer = null; pendingTransferNonce = null; }}]);
   }
   CampusTransfer.receiveIncoming().then(presentTransfer);
+  if (CampusTransfer.takePasteRequest()) openPasteSheet();
   if (!state.remoteUpdated || Date.now() - new Date(state.remoteUpdated).getTime() > 3600000) refreshCalendar(true);
   menuWorker().then(worker => { if (worker) Object.values(state.cafeteria).forEach(menuImage => cacheMenuImage(menuImage?.image)); });
   if (state.setupComplete) refreshCafeteria(true);

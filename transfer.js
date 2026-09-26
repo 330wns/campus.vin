@@ -115,7 +115,10 @@
   // Transfers travel inside the link itself: JSON, raw-deflated, base64url encoded. Links are
   // kept to MAX_LINK_CHARS so browsers and macOS pass them to the other app intact.
   const MAX_LINK_CHARS = 24000;
-  const TRUNCATED = 'The transfer link was cut off before it reached Campus. Nothing was changed. Try sending again.';
+  // Clipboard transfers carry everything; this only guards against absurd input.
+  const MAX_CLIPBOARD_BYTES = 10000000;
+  const CLIPBOARD_PREFIX = 'CAMPUS-TRANSFER-1:';
+  const TRUNCATED = 'The transfer link was cut off before it reached Campus. Nothing was changed. Use Send All via Clipboard in the Mac app\'s Settings instead.';
   const toBase64Url = bytes => {
     let binary = '';
     for (let offset = 0; offset < bytes.length; offset += 8192) {
@@ -123,8 +126,8 @@
     }
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   };
-  const fromBase64Url = value => {
-    if (typeof value !== 'string' || !value || value.length > MAX_LINK_CHARS * 2 || !/^[A-Za-z0-9_-]+$/.test(value)) throw Error(TRUNCATED);
+  const fromBase64Url = (value, maxChars = MAX_LINK_CHARS * 2) => {
+    if (typeof value !== 'string' || !value || value.length > maxChars || !/^[A-Za-z0-9_-]+$/.test(value)) throw Error(TRUNCATED);
     const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4));
     return Uint8Array.from(binary, char => char.charCodeAt(0));
   };
@@ -132,7 +135,7 @@
     const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
     return new Uint8Array(await new Response(stream).arrayBuffer());
   }
-  async function inflate(bytes) {
+  async function inflate(bytes, maxBytes = MAX_BYTES) {
     const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
     const chunks = [];
     let size = 0;
@@ -141,7 +144,7 @@
       try { result = await reader.read(); } catch { throw Error(TRUNCATED); }
       if (result.done) break;
       size += result.value.length;
-      if (size > MAX_BYTES) { reader.cancel(); throw Error('This Campus transfer is too large. Nothing was changed.'); }
+      if (size > maxBytes) { reader.cancel(); throw Error('This Campus transfer is too large. Nothing was changed.'); }
       chunks.push(result.value);
     }
     const output = new Uint8Array(size);
@@ -193,9 +196,9 @@
     }
     return {...rest, schedules};
   }
-  async function pack(snapshot) {
+  async function pack(snapshot, maxBytes = MAX_BYTES) {
     const bytes = textEncoder.encode(JSON.stringify(compactDays(snapshot)));
-    return bytes.length > MAX_BYTES ? null : toBase64Url(await deflate(bytes));
+    return bytes.length > maxBytes ? null : toBase64Url(await deflate(bytes));
   }
   const schoolDay = (instant = new Date()) => {
     const fields = Object.fromEntries(new Intl.DateTimeFormat('en-US', {timeZone:'Asia/Seoul',
@@ -250,8 +253,8 @@
     return best;
   }
 
-  async function decode(payload) {
-    const json = await inflate(fromBase64Url(payload));
+  async function decode(payload, maxBytes = MAX_BYTES) {
+    const json = await inflate(fromBase64Url(payload, maxBytes === MAX_BYTES ? MAX_LINK_CHARS * 2 : maxBytes * 2), maxBytes);
     let snapshot;
     try { snapshot = JSON.parse(textDecoder.decode(json)); } catch { throw Error(TRUNCATED); }
     return validate(expandDays(snapshot));
@@ -378,6 +381,27 @@
       Object.keys(snapshot.customDays).length);
   }
 
+  // "Send All via Clipboard": everything, nothing left out, as text to paste into the Mac app.
+  async function clipboardCode(state) {
+    const snapshot = fromWebState(state);
+    if (!hasTransferableData(snapshot)) throw Error('There is no Campus data in this browser to send yet. Add a schedule, homework, event or club first.');
+    const packed = await pack(snapshot, MAX_CLIPBOARD_BYTES);
+    if (!packed) throw Error('There is too much data to transfer. Nothing was changed.');
+    return CLIPBOARD_PREFIX + packed;
+  }
+  async function fromClipboardCode(text) {
+    const code = String(text || '').trim();
+    if (!code.startsWith(CLIPBOARD_PREFIX)) throw Error("That isn't Campus data. In Campus for Mac, choose Send All via Clipboard, then paste here.");
+    return decode(code.slice(CLIPBOARD_PREFIX.length), MAX_CLIPBOARD_BYTES);
+  }
+
+  // The Mac app opens #campus-paste after copying everything to the clipboard.
+  let pasteRequested = false;
+  if (location.hash === '#campus-paste') {
+    pasteRequested = true;
+    history.replaceState(null, '', `${location.pathname}${location.search}#today`);
+  }
+
   let incomingLink = null;
   if (location.hash.startsWith('#campus-transfer-z=')) {
     const values = new URLSearchParams(location.hash.slice(1));
@@ -442,5 +466,6 @@
   }
 
   window.CampusTransfer = {encode, decode, validate, fromWebState, toWebState,
-    receiveIncoming, markUsed, requestAppExport, sendToApp};
+    receiveIncoming, markUsed, requestAppExport, sendToApp, clipboardCode, fromClipboardCode,
+    takePasteRequest: () => { const requested = pasteRequested; pasteRequested = false; return requested; }};
 })();
