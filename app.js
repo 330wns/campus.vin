@@ -756,7 +756,7 @@
       case 'close': closeLayer(); if (!layers.length) render(); break;
       case 'alert': { const layer = layers.at(-1); closeLayer(); layer.buttons[Number(t.dataset.index)]?.run?.(); break; }
       case 'import-from-app': try { CampusTransfer.requestAppExport(); } catch (error) { toast(error.message); } break;
-      case 'send-to-app': try { CampusTransfer.sendToApp(state); } catch (error) { toast(error.message); } break;
+      case 'send-to-app': CampusTransfer.sendToApp(state).catch(error => toast(error.message)); break;
       case 'appearance': state.appearance = value; save(); render(); break;
       case 'setup-division': case 'division': state.division = value; if (a === 'setup-division') state.club.enabled = value === 'MS'; save(); render(); refreshCalendar(true); if (a === 'division') refreshCafeteria(true); break;
       case 'setup-next': if (setupStep() === 0) state.club.enabled = state.division === 'MS'; state.setupStep = Math.min(3, setupStep() + 1); save(); render(); break;
@@ -864,21 +864,18 @@
     } catch (error) { toast(error.message); }
   }
   function presentTransfer(receivedTransfer) {
-    if (receivedTransfer?.error) { toast(receivedTransfer.error); return; }
+    if (receivedTransfer?.error) { openAlert('Campus transfer failed', receivedTransfer.error, [{label: 'OK', role: 'default'}]); return; }
     if (!receivedTransfer?.snapshot) return;
     pendingTransfer = receivedTransfer.snapshot;
     pendingTransferNonce = receivedTransfer.nonce;
     const snapshot = pendingTransfer;
     const count = Object.values(snapshot.schedules).reduce((total, classes) => total + classes.length, 0);
+    const omitted = Number(snapshot.omitted) > 0 ? ` ${snapshot.omitted} older items were left out to fit the transfer link.` : '';
     openAlert('Import from Campus for Mac?',
-      `${receivedTransfer.unrequested ? 'This browser did not start the transfer. Continue only if you just approved sending from your Mac. ' : ''}Replace this browser's schedules, homework, Trash, custom days, club and personal calendar events with ${count} classes, ${snapshot.homework.length} homework items, ${snapshot.trash?.length || 0} Trash items, ${snapshot.events.length} calendar events and ${Object.keys(snapshot.customDays).length} custom days. Google sign-in will be disconnected; sign in again here after import.`,
+      `${receivedTransfer.unrequested ? 'This browser did not start the transfer. Continue only if you just approved sending from your Mac. ' : ''}Replace this browser's schedules, homework, Trash, custom days, club and personal calendar events with ${count} classes, ${snapshot.homework.length} homework items, ${snapshot.trash?.length || 0} Trash items, ${snapshot.events.length} calendar events and ${Object.keys(snapshot.customDays).length} custom days. Google sign-in will be disconnected; sign in again here after import.${omitted}`,
       [{label: 'Replace Data', role: 'default destructive', run: applyTransfer}, {label: 'Cancel', run: () => { pendingTransfer = null; pendingTransferNonce = null; }}]);
   }
-  presentTransfer(CampusTransfer.takeIncoming());
-  if (CampusTransfer.hasPending()) openAlert('Receiving Mac data…', 'Campus is retrieving your encrypted transfer. Keep this tab open; this can take up to a minute.', []);
-  CampusTransfer.receivePending().then(received => {
-    if (received) { closeAllLayers(); presentTransfer(received); }
-  });
+  CampusTransfer.receiveIncoming().then(presentTransfer);
   if (!state.remoteUpdated || Date.now() - new Date(state.remoteUpdated).getTime() > 3600000) refreshCalendar(true);
   menuWorker().then(worker => { if (worker) Object.values(state.cafeteria).forEach(menuImage => cacheMenuImage(menuImage?.image)); });
   if (state.setupComplete) refreshCafeteria(true);

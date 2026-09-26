@@ -112,22 +112,149 @@
     return snapshot;
   }
 
-  function encode(snapshot) {
-    const bytes = textEncoder.encode(JSON.stringify(validate(snapshot)));
-    if (bytes.length > MAX_BYTES) throw Error('Too much data for a one-click link. Remove old items before trying again.');
+  // Transfers travel inside the link itself: JSON, raw-deflated, base64url encoded. Links are
+  // kept to MAX_LINK_CHARS so browsers and macOS pass them to the other app intact.
+  const MAX_LINK_CHARS = 24000;
+  const TRUNCATED = 'The transfer link was cut off before it reached Campus. Nothing was changed. Try sending again.';
+  const toBase64Url = bytes => {
     let binary = '';
     for (let offset = 0; offset < bytes.length; offset += 8192) {
       binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
     }
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  };
+  const fromBase64Url = value => {
+    if (typeof value !== 'string' || !value || value.length > MAX_LINK_CHARS * 2 || !/^[A-Za-z0-9_-]+$/.test(value)) throw Error(TRUNCATED);
+    const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4));
+    return Uint8Array.from(binary, char => char.charCodeAt(0));
+  };
+  async function deflate(bytes) {
+    const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  async function inflate(bytes) {
+    const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+    const chunks = [];
+    let size = 0;
+    for (;;) {
+      let result;
+      try { result = await reader.read(); } catch { throw Error(TRUNCATED); }
+      if (result.done) break;
+      size += result.value.length;
+      if (size > MAX_BYTES) { reader.cancel(); throw Error('This Campus transfer is too large. Nothing was changed.'); }
+      chunks.push(result.value);
+    }
+    const output = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.length; }
+    return output;
+  }
+  // Each day travels as separate course and time lists; a list identical to an earlier day's is
+  // sent as that day's key, e.g. days.TA = {c: 'MA', t: [['10:00', '10:40'], …]}. Class IDs are
+  // not sent; the receiver makes new ones.
+  function compactDays(snapshot) {
+    const schedules = {...snapshot.schedules}, days = {}, seenCourses = [], seenTimes = [];
+    for (const key of DAY_KEYS) {
+      const classes = snapshot.schedules[key];
+      if (!classes?.length) continue;
+      const courses = classes.map(block => [block.subject, block.teacher, block.room, block.color || null]);
+      const times = classes.map(block => [block.start, block.end]);
+      const courseSignature = JSON.stringify(courses), timeSignature = JSON.stringify(times);
+      const courseSource = seenCourses.find(([, signature]) => signature === courseSignature)?.[0];
+      const timeSource = seenTimes.find(([, signature]) => signature === timeSignature)?.[0];
+      if (!courseSource) seenCourses.push([key, courseSignature]);
+      if (!timeSource) seenTimes.push([key, timeSignature]);
+      days[key] = {c: courseSource || courses, t: timeSource || times};
+      delete schedules[key];
+    }
+    return Object.keys(days).length ? {...snapshot, schedules, days} : snapshot;
+  }
+  function expandDays(snapshot) {
+    if (snapshot?.days == null) return snapshot;
+    const {days, ...rest} = snapshot;
+    if (typeof days !== 'object' || !rest.schedules || typeof rest.schedules !== 'object') fail();
+    const resolve = (key, part) => {
+      const value = days[key]?.[part];
+      if (Array.isArray(value)) return value;
+      const origin = typeof value === 'string' ? days[value]?.[part] : null;
+      if (!Array.isArray(origin)) fail();
+      return origin;
+    };
+    const schedules = {...rest.schedules};
+    for (const key of Object.keys(days)) {
+      const courses = resolve(key, 'c'), times = resolve(key, 't');
+      if (!DAY_KEYS.includes(key) || courses.length !== times.length || courses.length > 50) fail();
+      schedules[key] = courses.map((course, index) => {
+        const time = times[index];
+        if (!Array.isArray(course) || course.length !== 4 || !Array.isArray(time) || time.length !== 2) fail();
+        const [subject, teacher, room, color] = course;
+        return {id: crypto.randomUUID(), subject, teacher, room, start: time[0], end: time[1], color};
+      });
+    }
+    return {...rest, schedules};
+  }
+  async function pack(snapshot) {
+    const bytes = textEncoder.encode(JSON.stringify(compactDays(snapshot)));
+    return bytes.length > MAX_BYTES ? null : toBase64Url(await deflate(bytes));
+  }
+  const schoolDay = (instant = new Date()) => {
+    const fields = Object.fromEntries(new Intl.DateTimeFormat('en-US', {timeZone:'Asia/Seoul',
+      year:'numeric', month:'2-digit', day:'2-digit'}).formatToParts(instant)
+      .filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+    return `${fields.year}-${fields.month}-${fields.day}`;
+  };
+
+  // Items in the order they are left out when a transfer is too large: least useful first,
+  // so whatever still fits is the most recent and relevant data. Schedules, rotation and club
+  // always travel.
+  function dropOrder(snapshot, now = new Date()) {
+    const today = schoolDay(now), nowTime = now.getTime();
+    const due = snapshot.homework.map(item => Date.parse(item.due) || 0);
+    const eventEnd = snapshot.events.map(item => item.end || item.start);
+    const homework = snapshot.homework.map((item, index) => index);
+    const events = snapshot.events.map((item, index) => index);
+    const days = Object.keys(snapshot.customDays);
+    return [
+      ...homework.filter(i => snapshot.homework[i].complete).sort((a, b) => due[a] - due[b]).map(i => ['homework', i]),
+      ...events.filter(i => eventEnd[i] < today).sort((a, b) => eventEnd[a].localeCompare(eventEnd[b])).map(i => ['events', i]),
+      ...days.filter(day => day < today).sort().map(day => ['customDays', day]),
+      ...homework.filter(i => !snapshot.homework[i].complete && due[i] < nowTime).sort((a, b) => due[a] - due[b]).map(i => ['homework', i]),
+      ...homework.filter(i => !snapshot.homework[i].complete && due[i] >= nowTime).sort((a, b) => due[b] - due[a]).map(i => ['homework', i]),
+      ...events.filter(i => eventEnd[i] >= today).sort((a, b) => snapshot.events[b].start.localeCompare(snapshot.events[a].start)).map(i => ['events', i]),
+      ...days.filter(day => day >= today).sort().reverse().map(day => ['customDays', day])
+    ];
+  }
+  function without(snapshot, drops) {
+    const gone = {homework: new Set(), events: new Set(), customDays: new Set()};
+    for (const [group, key] of drops) gone[group].add(key);
+    return {...snapshot,
+      homework: snapshot.homework.filter((item, index) => !gone.homework.has(index)),
+      events: snapshot.events.filter((item, index) => !gone.events.has(index)),
+      customDays: Object.fromEntries(Object.entries(snapshot.customDays).filter(([day]) => !gone.customDays.has(day)))};
   }
 
-  function decode(payload) {
-    if (typeof payload !== 'string' || payload.length > MAX_BYTES * 2 || !/^[A-Za-z0-9_-]+$/.test(payload)) fail();
-    const binary = atob(payload.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - payload.length % 4) % 4));
-    if (binary.length > MAX_BYTES) fail();
-    const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
-    return validate(JSON.parse(textDecoder.decode(bytes)));
+  // Returns {payload, omitted}; leaves out the oldest items when everything won't fit a link.
+  async function encode(snapshot, now = new Date()) {
+    validate(snapshot);
+    const full = await pack(snapshot);
+    if (full && full.length <= MAX_LINK_CHARS) return {payload: full, omitted: 0};
+    const drops = dropOrder(snapshot, now);
+    let low = 1, high = drops.length, best = null;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      const packed = await pack({...without(snapshot, drops.slice(0, mid)), omitted: mid});
+      if (packed && packed.length <= MAX_LINK_CHARS) { best = {payload: packed, omitted: mid}; high = mid - 1; }
+      else low = mid + 1;
+    }
+    if (!best) throw Error('Too much data for a transfer link, even after leaving out older items.');
+    return best;
+  }
+
+  async function decode(payload) {
+    const json = await inflate(fromBase64Url(payload));
+    let snapshot;
+    try { snapshot = JSON.parse(textDecoder.decode(json)); } catch { throw Error(TRUNCATED); }
+    return validate(expandDays(snapshot));
   }
 
   function fromWebState(state) {
@@ -251,20 +378,24 @@
       Object.keys(snapshot.customDays).length);
   }
 
-  let incoming = null;
-  let remotePending = null;
-  if (location.hash.startsWith('#campus-transfer-id=')) {
+  let incomingLink = null;
+  if (location.hash.startsWith('#campus-transfer-z=')) {
     const values = new URLSearchParams(location.hash.slice(1));
-    remotePending = {id:values.get('campus-transfer-id'), key:values.get('key'),
-      nonce:values.get('nonce')};
+    incomingLink = {payload: values.get('campus-transfer-z'), nonce: values.get('nonce')};
+    history.replaceState(null, '', `${location.pathname}${location.search}#settings`);
+  } else if (location.hash.startsWith('#campus-transfer-id=') || location.hash.startsWith('#campus-transfer=')) {
+    // Older Mac apps uploaded transfers to a server that no longer exists.
+    incomingLink = {legacy: true};
     history.replaceState(null, '', `${location.pathname}${location.search}#settings`);
   }
-  if (location.hash.startsWith('#campus-transfer=')) {
-    const values = new URLSearchParams(location.hash.slice(1));
-    const payload = values.get('campus-transfer');
-    const nonce = values.get('nonce');
-    history.replaceState(null, '', `${location.pathname}${location.search}#settings`);
+
+  async function receiveIncoming() {
+    const link = incomingLink;
+    incomingLink = null;
+    if (!link) return null;
+    if (link.legacy) return {snapshot: null, error: 'This transfer came from an older version of Campus for Mac. Update the Mac app and send it again.'};
     try {
+      const nonce = link.nonce;
       const pending = JSON.parse(localStorage.getItem(PENDING_KEY) || 'null');
       localStorage.removeItem(PENDING_KEY);
       if (!/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(nonce || '')) fail();
@@ -276,70 +407,9 @@
       if (activeRequest && pending.nonce !== nonce) {
         throw Error('This transfer does not match the current request in this browser. Start again.');
       }
-      incoming = {snapshot: decode(payload), error: null, unrequested: !activeRequest, nonce};
+      return {snapshot: await decode(link.payload), error: null, unrequested: !activeRequest, nonce};
     } catch (error) {
-      incoming = {snapshot: null, error: error.message || 'Campus transfer failed.'};
-    }
-  }
-
-  function takeIncoming() {
-    const value = incoming;
-    incoming = null;
-    return value;
-  }
-
-  async function receivePending() {
-    const transfer = remotePending;
-    remotePending = null;
-    if (!transfer) return null;
-    try {
-      if (!/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(transfer.id || '') ||
-          !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(transfer.nonce || '') ||
-          !/^[A-Za-z0-9_-]{43}$/.test(transfer.key || '')) fail();
-      const pending = JSON.parse(localStorage.getItem(PENDING_KEY) || 'null');
-      localStorage.removeItem(PENDING_KEY);
-      const activeRequest = pending && Date.now() >= pending.createdAt &&
-        Date.now() - pending.createdAt <= 300000;
-      if (activeRequest && pending.nonce !== transfer.nonce) {
-        throw Error('This transfer does not match the current request in this browser. Start again.');
-      }
-      let used = [];
-      try { used = JSON.parse(localStorage.getItem(USED_KEY) || '[]'); } catch { used = []; }
-      if (Array.isArray(used) && used.includes(transfer.nonce)) {
-        throw Error('This Campus transfer has already been imported in this browser.');
-      }
-      let payload;
-      for (let attempt = 0; attempt < 25; attempt++) {
-        const response = await fetch('/api/transfer', {method:'POST', cache:'no-store',
-          credentials:'omit', headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({action:'claim', id:transfer.id})});
-        if (response.status === 404 && attempt < 24) {
-          await new Promise(resolve => setTimeout(resolve, 3000));
-          continue;
-        }
-        if (!response.ok) {
-          throw Error(response.status === 404 ? 'Transfer expired or could not be found. Try again from the Mac app.' :
-            'Campus Web could not receive the Mac transfer. Check the site setup and try again.');
-        }
-        payload = (await response.json()).payload;
-        break;
-      }
-      const bytes = value => {
-        if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value)) fail();
-        const text = atob(value.replace(/-/g, '+').replace(/_/g, '/') +
-          '='.repeat((4 - value.length % 4) % 4));
-        return Uint8Array.from(text, char => char.charCodeAt(0));
-      };
-      const key = bytes(transfer.key);
-      const sealed = bytes(payload);
-      if (key.length !== 32 || sealed.length < 29 || sealed.length > 2_000_028) fail();
-      const cryptoKey = await crypto.subtle.importKey('raw', key, 'AES-GCM', false, ['decrypt']);
-      const plaintext = await crypto.subtle.decrypt({name:'AES-GCM', iv:sealed.slice(0, 12)},
-        cryptoKey, sealed.slice(12));
-      return {snapshot:validate(JSON.parse(textDecoder.decode(plaintext))), error:null,
-        unrequested:!activeRequest, nonce:transfer.nonce};
-    } catch (error) {
-      return {snapshot:null, error:error.message || 'Campus transfer failed.'};
+      return {snapshot: null, error: error.message || 'Campus transfer failed.'};
     }
   }
 
@@ -364,14 +434,13 @@
     location.href = `campus://export?callback=${encodeURIComponent(callback)}&nonce=${encodeURIComponent(nonce)}`;
   }
 
-  function sendToApp(state) {
+  async function sendToApp(state) {
     const snapshot = fromWebState(state);
     if (!hasTransferableData(snapshot)) throw Error('There is no Campus data in this browser to send yet. Add a schedule, homework, event or club first.');
-    const payload = encode(snapshot);
-    location.href = `campus://import?data=${payload}`;
+    const {payload} = await encode(snapshot);
+    location.href = `campus://import?z=${payload}`;
   }
 
   window.CampusTransfer = {encode, decode, validate, fromWebState, toWebState,
-    takeIncoming, receivePending, hasPending:() => Boolean(remotePending),
-    markUsed, requestAppExport, sendToApp};
+    receiveIncoming, markUsed, requestAppExport, sendToApp};
 })();

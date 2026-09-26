@@ -21,11 +21,10 @@ jobs:
           node --check powerschool.js
           node --check transfer.js
           node --check menu-sw.js
-          node --check functions/api/transfer.js
       - name: Prepare site
         run: |
           mkdir dist
-          cp index.html privacy.html terms.html legal.css styles.css extras.css app.js powerschool.js google.js transfer.js menu-sw.js campus-icon-64.png campus-favicon-32.png _routes.json dist/
+          cp index.html privacy.html terms.html legal.css styles.css extras.css app.js powerschool.js google.js transfer.js menu-sw.js campus-icon-64.png campus-favicon-32.png dist/
       - name: Verify Cloudflare credentials
         env:
           CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
