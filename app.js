@@ -523,10 +523,11 @@
   function redrawTransfer() { const focus = captureFocus(); drawLayers(); restoreFocus(focus); }
   function receiveSheet() {
     const {value, busy, error} = receiveState;
-    return `<div class="transfer-sheet"><div class="transfer-sheet-head"><h2 class="display-22">Import from Campus for Mac</h2>${iconButton('Close', 'xmark', 'close')}</div><p class="subheadline sub">In Campus for Mac, choose Send to Campus Web…. It shows an 8-character code that works once for 5 minutes. Type it here. You'll be asked before anything is replaced.</p><input class="code-input" data-code-input data-fk="transfer-code" value="${esc(value)}" maxlength="9" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" aria-label="8-character code" ${busy ? 'disabled' : ''}>${error ? notice(error, 'warn') : ''}<div class="sheet-actions"><span class="spacer"></span>${btn(busy ? 'Importing…' : 'Import', {action: 'receive-code', kind: 'prominent', disabled: busy || !value.trim()})}</div></div>`;
+    return `<div class="transfer-sheet"><div class="transfer-sheet-head"><h2 class="display-22">Import from Campus for Mac</h2>${iconButton('Close', 'xmark', 'close')}</div><p class="subheadline sub">Campus for Mac is opening to show an 8-character code that works once for 5 minutes. Type it here. You'll be asked before anything is replaced.</p><input class="code-input" data-code-input data-fk="transfer-code" value="${esc(value)}" maxlength="9" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" aria-label="8-character code" ${busy ? 'disabled' : ''}>${error ? notice(error, 'warn') : ''}<div class="sheet-actions"><button type="button" class="plain-link" data-action="open-app-send">Campus for Mac didn't open? Try again</button><span class="spacer"></span>${btn(busy ? 'Importing…' : 'Import', {action: 'receive-code', kind: 'prominent', disabled: busy || !value.trim()})}</div></div>`;
   }
   function openReceiveSheet() {
     receiveState = {value: '', busy: false, error: ''};
+    CampusTransfer.openApp('send');
     if (layers.at(-1)?.render === receiveSheet) return redrawTransfer();
     openSheet(receiveSheet, 'transfer');
     document.querySelector('[data-code-input]')?.focus();
@@ -550,8 +551,8 @@
     if (s.status === 'error') body = `${notice(s.error, 'warn')}<div class="sheet-actions"><span class="spacer"></span>${btn('Try Again', {action: 'send-to-app', kind: 'prominent'})}</div>`;
     else if (s.status === 'working') body = `<div class="transfer-wait">${spinner}<span>Encrypting and uploading…</span></div>`;
     else if (Date.now() >= s.expiresAt) body = `${notice('This code has expired.', 'warn')}<div class="sheet-actions"><span class="spacer"></span>${btn('Get a New Code', {action: 'send-to-app', kind: 'prominent'})}</div>`;
-    else body = `<div class="code-display" aria-label="Transfer code">${esc(s.code)}</div><div class="caption sub transfer-expiry">Expires in <span data-send-countdown>${countdown(s.expiresAt - Date.now())}</span> · works once</div><div class="sheet-actions">${btn('Copy Code', {action: 'copy-code', sym: 'stack'})}<span class="spacer"></span>${btn('Done', {action: 'close', kind: 'prominent'})}</div>`;
-    return `<div class="transfer-sheet"><div class="transfer-sheet-head"><h2 class="display-22">Send to Campus for Mac</h2>${iconButton('Close', 'xmark', 'close')}</div><p class="subheadline sub">In Campus for Mac, choose Import from Campus Web… and enter this code. Your data is encrypted in this browser with a key made from the code, so only someone with the code can read it.</p>${body}</div>`;
+    else body = `<div class="code-display" aria-label="Transfer code">${esc(s.code)}</div><div class="caption sub transfer-expiry">Expires in <span data-send-countdown>${countdown(s.expiresAt - Date.now())}</span> · works once</div><div class="sheet-actions">${btn('Copy Code', {action: 'copy-code', sym: 'stack'})}${btn('Open Campus for Mac', {action: 'open-app-import', sym: 'arrowUpRight'})}<span class="spacer"></span>${btn('Done', {action: 'close', kind: 'prominent'})}</div>`;
+    return `<div class="transfer-sheet"><div class="transfer-sheet-head"><h2 class="display-22">Send to Campus for Mac</h2>${iconButton('Close', 'xmark', 'close')}</div><p class="subheadline sub">Campus for Mac opens with this code filled in; if it doesn't, choose Import from Campus Web… there and enter it. Your data is encrypted in this browser with a key made from the code, so only someone with the code can read it.</p>${body}</div>`;
   }
   async function startSend() {
     const run = ++sendRun;
@@ -563,6 +564,7 @@
       if (run !== sendRun) return;
       sendState = {status: 'ready', code, expiresAt};
       hideAppPromo();
+      CampusTransfer.openApp('import', code);
       sendTimer = setInterval(() => {
         if (run !== sendRun || !layers.some(layer => layer.render === sendSheet)) return clearInterval(sendTimer);
         const left = expiresAt - Date.now();
@@ -844,6 +846,8 @@
       case 'alert': { const layer = layers.at(-1); closeLayer(); layer.buttons[Number(t.dataset.index)]?.run?.(); break; }
       case 'import-from-app': openReceiveSheet(); break;
       case 'receive-code': submitCode(); break;
+      case 'open-app-send': CampusTransfer.openApp('send'); break;
+      case 'open-app-import': CampusTransfer.openApp('import', sendState?.code); break;
       case 'copy-code': navigator.clipboard?.writeText(sendState?.code || '').then(() => toast('Code copied.'), () => toast('Could not copy the code.')); break;
       case 'hide-app-promo': hideAppPromo(); break;
       case 'send-to-app': startSend(); break;
@@ -952,8 +956,38 @@
       if (!save()) { state = previous; return; }
       CampusGoogle.disconnect();
       hideAppPromo();
-      pendingTransfer = null; closeAllLayers(); go('homework'); toast('Mac data imported. Connect Google Classroom again to resume syncing.');
+      pendingTransfer = null; closeAllLayers(); transferTabs?.postMessage({type: 'imported'}); go('homework'); toast('Mac data imported. Connect Google Classroom again to resume syncing.');
     } catch (error) { toast(error.message); }
+  }
+  // The Mac app opens this site in a new tab with the code. That tab does the import, and the tab
+  // that was waiting for the code steps aside, so the code is only ever used once.
+  const transferTabs = 'BroadcastChannel' in window ? new BroadcastChannel('campus-transfer') : null;
+  let steppedAside = false, unrequestedImport = false;
+  transferTabs?.addEventListener('message', event => {
+    const message = event.data || {};
+    if (message.type === 'handoff' && layers.some(layer => layer.render === receiveSheet)) {
+      steppedAside = true;
+      layers = layers.filter(layer => layer.render !== receiveSheet);
+      receiveState = {value: '', busy: false, error: ''};
+      drawLayers();
+      transferTabs.postMessage({type: 'ack'});
+      toast('Continuing the import in your new Campus tab.');
+    } else if (message.type === 'imported' && steppedAside) location.reload();
+  });
+  async function importCodeFromApp(code) {
+    if (code === 'invalid') { openAlert('Campus transfer failed', 'The code in this link is not valid. Ask Campus for Mac for a new one.', [{label: 'OK', role: 'default'}]); return; }
+    // Another Campus tab that is waiting for this code takes a moment to answer.
+    const answered = transferTabs ? await new Promise(resolve => {
+      const done = value => { transferTabs.removeEventListener('message', listener); clearTimeout(timer); resolve(value); };
+      const listener = event => { if (event.data?.type === 'ack') done(true); };
+      const timer = setTimeout(() => done(false), 600);
+      transferTabs.addEventListener('message', listener);
+      transferTabs.postMessage({type: 'handoff'});
+    }) : false;
+    unrequestedImport = !answered;
+    receiveState = {value: CampusTransfer.formatCode(code), busy: false, error: ''};
+    openSheet(receiveSheet, 'transfer');
+    submitCode();
   }
   function presentTransfer(snapshot) {
     if (!snapshot) return;
@@ -961,10 +995,14 @@
     const count = Object.values(snapshot.schedules).reduce((total, classes) => total + classes.length, 0);
     const cancel = {label: 'Cancel', run: () => { pendingTransfer = null; }};
     const summary = `${count} classes, ${snapshot.homework.length} homework items, ${snapshot.trash?.length || 0} Trash items, ${snapshot.events.length} calendar events and ${Object.keys(snapshot.customDays).length} custom days`;
+    const warning = unrequestedImport ? 'This browser did not ask for this transfer. Continue only if you just sent it from Campus for Mac. ' : '';
+    unrequestedImport = false;
     openAlert('Import from Campus for Mac?',
-      `Replace this browser's schedules, homework, Trash, custom days, club and personal calendar events with ${summary}. Google sign-in will be disconnected; sign in again here after import.`,
+      `${warning}Replace this browser's schedules, homework, Trash, custom days, club and personal calendar events with ${summary}. Google sign-in will be disconnected; sign in again here after import.`,
       [{label: 'Replace Data', role: 'default destructive', run: applyTransfer}, cancel]);
   }
+  const linkedCode = CampusTransfer.takeIncomingCode();
+  if (linkedCode) importCodeFromApp(linkedCode);
   if (!state.remoteUpdated || Date.now() - new Date(state.remoteUpdated).getTime() > 3600000) refreshCalendar(true);
   menuWorker().then(worker => { if (worker) Object.values(state.cafeteria).forEach(menuImage => cacheMenuImage(menuImage?.image)); });
   if (state.setupComplete) refreshCafeteria(true);

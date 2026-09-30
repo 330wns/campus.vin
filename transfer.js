@@ -416,6 +416,19 @@
       snapshot.trash?.length ||
       Object.keys(snapshot.customDays).length);
   }
-  window.CampusTransfer = {send, receive, validate, fromWebState, toWebState, hasTransferableData,
+  // Campus for Mac opens this site as /#campus-code=CODE once it has a code ready. The code is
+  // taken out of the address right away so it isn't kept in the URL or shared by accident.
+  let incomingCode = null;
+  if (location.hash.startsWith('#campus-code=')) {
+    try { incomingCode = normalizeCode(decodeURIComponent(location.hash.slice('#campus-code='.length))); }
+    catch { incomingCode = 'invalid'; }
+    history.replaceState(null, '', `${location.pathname}${location.search}`);
+  }
+  const takeIncomingCode = () => { const code = incomingCode; incomingCode = null; return code; };
+
+  // Opens Campus for Mac: 'send' asks it to show a code, 'import' hands it the code shown here.
+  const openApp = (page, code) => { location.href = `campus://${page}${code ? `?code=${encodeURIComponent(code.replace('-', ''))}` : ''}`; };
+
+  window.CampusTransfer = {send, receive, openApp, takeIncomingCode, validate, fromWebState, toWebState, hasTransferableData,
     newCode, formatCode, normalizeCode, derive, seal, open, LIFETIME_MS};
 })();
