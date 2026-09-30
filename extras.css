@@ -35,11 +35,16 @@
 .custom-summary { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-radius: 10px; }
 
 /* PowerSchool sync sheet */
-.paste-sheet { display: flex; flex-direction: column; gap: 14px; padding: 24px; }
-.paste-sheet-head { display: flex; align-items: center; gap: 12px; }
-.paste-sheet-head h2 { flex: 1; }
-.paste-sheet p { margin: 0; line-height: 1.5; }
-.paste-sheet .paste-zone { height: 110px; }
+.transfer-sheet { display: flex; flex-direction: column; gap: 14px; padding: 24px; min-width: min(420px, 100%); }
+.transfer-sheet-head { display: flex; align-items: center; gap: 12px; }
+.transfer-sheet-head h2 { flex: 1; }
+.transfer-sheet p { margin: 0; line-height: 1.5; }
+.code-input { width: 100%; height: 56px; padding: 0 12px; border: 1.5px solid var(--campus-line); border-radius: 10px; background: var(--campus-fill); color: var(--campus-ink); font: 600 26px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-align: center; text-transform: uppercase; }
+.code-input:focus { outline: none; border-color: var(--campus-sub); background: var(--campus-surface); }
+.code-input::placeholder { color: var(--campus-faint); letter-spacing: .14em; }
+.code-display { padding: 18px 12px; border: 1px solid var(--campus-line); border-radius: 12px; background: var(--campus-fill); font: 700 34px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .16em; text-align: center; user-select: all; }
+.transfer-expiry { text-align: center; font-variant-numeric: tabular-nums; }
+.transfer-wait { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 22px 0; color: var(--campus-sub); }
 .sync-sheet, .settings-sheet { display: flex; flex-direction: column; max-height: min(88vh, 720px); }
 .sync-sheet .sheet-scroll { padding: 24px 24px 12px; display: flex; flex-direction: column; gap: 18px; overflow: auto; }
 .instructions { display: flex; flex-direction: column; gap: 12px; padding: 16px; }

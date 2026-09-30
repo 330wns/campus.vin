@@ -113,7 +113,7 @@
   let cafeteriaError = '', cafeteriaLoading = false, calendarLoading = false, calendarError = '';
   let classroomStatus = '', classroomError = '', syncingClassroom = false;
   let hwDraft = null, eventDraft = null;
-  let pendingTransfer = null, pendingTransferNonce = null;
+  let pendingTransfer = null;
   let layers = [];
 
   let toastTimer;
@@ -515,23 +515,70 @@
     return `<div class="page about-page">${icon('grad', 'about-icon')}<h1>Campus</h1><p class="about-tagline">School schedule management in one place.</p>${pill('KISJ')}<p>Developed by Jacob &amp; Jay</p><p>Thanks to Emil Kowalski, for apple-design</p><p class="caption faint">Questions or suggestions: jay@kisj.space · jacob@kisj.space</p><p class="caption2 faint mono">Campus Web</p></div>`;
   }
 
-  // Import everything via the clipboard: Campus for Mac copies all of its data (nothing left out,
-  // no link length limit), then the user pastes it here.
-  let pasteError = '';
-  function pasteSheet() {
-    return `<div class="paste-sheet"><div class="paste-sheet-head"><h2 class="display-22">Import everything from Campus for Mac</h2>${iconButton('Close', 'xmark', 'close')}</div><p class="subheadline sub">Campus for Mac is copying all of your data, with nothing left out. Once it says it's copied, click the box below and press ⌘V (or Ctrl+V). You'll be asked before anything is replaced.</p><textarea class="paste-zone" data-paste-transfer data-fk="paste-transfer" aria-label="Paste Campus data" placeholder="Click here and press ⌘V"></textarea>${pasteError ? notice(pasteError, 'warn') : ''}<div class="sheet-actions"><button type="button" class="plain-link" data-action="import-via-clipboard">Campus for Mac didn't open? Try again</button></div></div>`;
+  // Transfer with Campus for Mac: the sender shows an 8-character code, the receiver types it.
+  // The data is encrypted with a key made from the code, so the server only holds ciphertext for
+  // five minutes.
+  let receiveState = {value: '', busy: false, error: ''}, sendState = null, sendRun = 0, sendTimer;
+  const countdown = ms => { const total = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(total / 60)}:${p2(total % 60)}`; };
+  function redrawTransfer() { const focus = captureFocus(); drawLayers(); restoreFocus(focus); }
+  function receiveSheet() {
+    const {value, busy, error} = receiveState;
+    return `<div class="transfer-sheet"><div class="transfer-sheet-head"><h2 class="display-22">Import from Campus for Mac</h2>${iconButton('Close', 'xmark', 'close')}</div><p class="subheadline sub">In Campus for Mac, choose Send to Campus Web…. It shows an 8-character code that works once for 5 minutes. Type it here. You'll be asked before anything is replaced.</p><input class="code-input" data-code-input data-fk="transfer-code" value="${esc(value)}" maxlength="9" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" aria-label="8-character code" ${busy ? 'disabled' : ''}>${error ? notice(error, 'warn') : ''}<div class="sheet-actions"><span class="spacer"></span>${btn(busy ? 'Importing…' : 'Import', {action: 'receive-code', kind: 'prominent', disabled: busy || !value.trim()})}</div></div>`;
   }
-  function importViaClipboard() {
-    CampusTransfer.requestAppCopy();
-    if (layers.at(-1)?.render === pasteSheet) return;
-    pasteError = '';
-    openSheet(pasteSheet, 'paste');
-    requestAnimationFrame(() => document.querySelector('[data-paste-transfer]')?.focus());
+  function openReceiveSheet() {
+    receiveState = {value: '', busy: false, error: ''};
+    if (layers.at(-1)?.render === receiveSheet) return redrawTransfer();
+    openSheet(receiveSheet, 'transfer');
+    document.querySelector('[data-code-input]')?.focus();
+  }
+  async function submitCode() {
+    if (receiveState.busy) return;
+    receiveState.busy = true; receiveState.error = ''; redrawTransfer();
+    try {
+      const snapshot = await CampusTransfer.receive(receiveState.value);
+      receiveState.busy = false; receiveState.value = '';
+      if (layers.at(-1)?.render === receiveSheet) closeLayer();
+      presentTransfer(snapshot);
+    } catch (error) {
+      receiveState.busy = false; receiveState.error = error.message || 'Campus transfer failed.';
+      redrawTransfer();
+    }
+  }
+  function sendSheet() {
+    const s = sendState || {status: 'working'};
+    let body;
+    if (s.status === 'error') body = `${notice(s.error, 'warn')}<div class="sheet-actions"><span class="spacer"></span>${btn('Try Again', {action: 'send-to-app', kind: 'prominent'})}</div>`;
+    else if (s.status === 'working') body = `<div class="transfer-wait">${spinner}<span>Encrypting and uploading…</span></div>`;
+    else if (Date.now() >= s.expiresAt) body = `${notice('This code has expired.', 'warn')}<div class="sheet-actions"><span class="spacer"></span>${btn('Get a New Code', {action: 'send-to-app', kind: 'prominent'})}</div>`;
+    else body = `<div class="code-display" aria-label="Transfer code">${esc(s.code)}</div><div class="caption sub transfer-expiry">Expires in <span data-send-countdown>${countdown(s.expiresAt - Date.now())}</span> · works once</div><div class="sheet-actions">${btn('Copy Code', {action: 'copy-code', sym: 'stack'})}<span class="spacer"></span>${btn('Done', {action: 'close', kind: 'prominent'})}</div>`;
+    return `<div class="transfer-sheet"><div class="transfer-sheet-head"><h2 class="display-22">Send to Campus for Mac</h2>${iconButton('Close', 'xmark', 'close')}</div><p class="subheadline sub">In Campus for Mac, choose Import from Campus Web… and enter this code. Your data is encrypted in this browser with a key made from the code, so only someone with the code can read it.</p>${body}</div>`;
+  }
+  async function startSend() {
+    const run = ++sendRun;
+    clearInterval(sendTimer);
+    sendState = {status: 'working'};
+    if (layers.at(-1)?.render === sendSheet) redrawTransfer(); else openSheet(sendSheet, 'transfer');
+    try {
+      const {code, expiresAt} = await CampusTransfer.send(state);
+      if (run !== sendRun) return;
+      sendState = {status: 'ready', code, expiresAt};
+      hideAppPromo();
+      sendTimer = setInterval(() => {
+        if (run !== sendRun || !layers.some(layer => layer.render === sendSheet)) return clearInterval(sendTimer);
+        const left = expiresAt - Date.now();
+        if (left <= 0) { clearInterval(sendTimer); redrawTransfer(); return; }
+        const label = document.querySelector('[data-send-countdown]'); if (label) label.textContent = countdown(left);
+      }, 1000);
+    } catch (error) {
+      if (run !== sendRun) return;
+      sendState = {status: 'error', error: error.message || 'Campus transfer failed.'};
+    }
+    if (layers.some(layer => layer.render === sendSheet)) redrawTransfer();
   }
 
   // Settings (CampusSettingsView)
   function settingsSheet() {
-    return `<div class="settings-sheet"><div class="sheet-scroll settings-body"><div class="settings-head"><h2 class="display-24">Appearance</h2><div class="subheadline sub">Make Campus feel at home in your browser.</div></div><section class="card settings-card"><div class="settings-mode">${icon('halfCircle', 'settings-mode-icon')}<div><div class="headline">Color mode</div><div class="caption sub">Applies to every Campus page in this browser.</div></div></div>${segmented([['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], state.appearance, 'appearance')}<div class="caption sub">${state.appearance === 'system' ? 'Follows your device’s appearance automatically.' : 'Your choice is saved for the next time you open Campus.'}</div></section><section class="card settings-card"><div class="headline label-line">${icon('transfer')}Transfer with Campus for Mac</div><div class="caption sub">Move schedules, homework, Trash, custom days, club and personal calendar events between this browser and the Mac app. Each side asks before replacing anything. Google authorization and image caches stay on their original device.</div><div class="stacked-buttons">${btn('Import from Mac app…', {action: 'import-from-app', sym: 'download'})}${btn('Send to Mac app…', {action: 'send-to-app', sym: 'arrowUpRight'})}${btn('Import Everything via Clipboard…', {action: 'import-via-clipboard', sym: 'stack', title: 'Opens Campus for Mac to copy all of its data, with nothing left out, for you to paste here'})}</div></section><section class="card settings-card"><div class="headline label-line">${icon('drive')}Local Data</div><div class="caption sub">Permanently removes schedules, homework, calendar changes, cafeteria cache, Google Classroom authorization, Trash, and Campus preferences from this browser.</div><div class="stacked-buttons">${btn('Export Backup…', {action: 'export-data', sym: 'upload'})}<label class="btn outline" for="backup-file">${icon('download')}<span>Import Backup…</span></label><input id="backup-file" type="file" accept="application/json,.json" hidden></div>${btn('Delete All Data…', {action: 'reset-data', kind: 'bordered-destructive'})}</section></div><div class="sheet-footer"><span class="spacer"></span>${btn('Done', {action: 'close', kind: 'prominent'})}</div></div>`;
+    return `<div class="settings-sheet"><div class="sheet-scroll settings-body"><div class="settings-head"><h2 class="display-24">Appearance</h2><div class="subheadline sub">Make Campus feel at home in your browser.</div></div><section class="card settings-card"><div class="settings-mode">${icon('halfCircle', 'settings-mode-icon')}<div><div class="headline">Color mode</div><div class="caption sub">Applies to every Campus page in this browser.</div></div></div>${segmented([['system', 'System'], ['light', 'Light'], ['dark', 'Dark']], state.appearance, 'appearance')}<div class="caption sub">${state.appearance === 'system' ? 'Follows your device’s appearance automatically.' : 'Your choice is saved for the next time you open Campus.'}</div></section><section class="card settings-card"><div class="headline label-line">${icon('transfer')}Transfer with Campus for Mac</div><div class="caption sub">Move everything between this browser and the Mac app with an 8-character code that works once for 5 minutes. Your data is encrypted with a key made from the code, so it can't be read on the way. Each side asks before replacing anything. Google authorization and image caches stay on their original device.</div><div class="stacked-buttons">${btn('Import from Mac app…', {action: 'import-from-app', sym: 'download'})}${btn('Send to Mac app…', {action: 'send-to-app', sym: 'arrowUpRight'})}</div></section><section class="card settings-card"><div class="headline label-line">${icon('drive')}Local Data</div><div class="caption sub">Permanently removes schedules, homework, calendar changes, cafeteria cache, Google Classroom authorization, Trash, and Campus preferences from this browser.</div><div class="stacked-buttons">${btn('Export Backup…', {action: 'export-data', sym: 'upload'})}<label class="btn outline" for="backup-file">${icon('download')}<span>Import Backup…</span></label><input id="backup-file" type="file" accept="application/json,.json" hidden></div>${btn('Delete All Data…', {action: 'reset-data', kind: 'bordered-destructive'})}</section></div><div class="sheet-footer"><span class="spacer"></span>${btn('Done', {action: 'close', kind: 'prominent'})}</div></div>`;
   }
 
   // Onboarding (CampusOnboardingView)
@@ -543,7 +590,7 @@
     const heading = (symbol, title, subtitle) => `<div class="setup-heading"><span class="setup-heading-icon">${icon(symbol)}</span><div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div></div>`;
     const descriptions = {ES: 'Elementary School calendar and cafeteria', MS: 'Middle School calendar and cafeteria', HS: 'High School calendar and cafeteria'};
     let body;
-    if (step === 0) body = heading('building', 'Welcome to Campus', 'First, choose your school division. This controls the calendar and cafeteria information Campus loads.') + `<section class="card setup-card"><div class="headline label-line">${icon('download')}Already use Campus on Mac?</div><div class="caption sub">Choose Import from Mac app, then approve sending in the Mac app. Campus will ask before replacing browser data. Google sign-in is not transferred.</div><div>${btn('Import from Mac app…', {action: 'import-from-app', sym: 'download'})}</div></section><section class="card setup-card"><div class="headline">School division</div>${segmented(['ES', 'MS', 'HS'].map(d => [d, d]), state.division, 'setup-division')}<div class="caption sub">${descriptions[state.division]}</div></section>`;
+    if (step === 0) body = heading('building', 'Welcome to Campus', 'First, choose your school division. This controls the calendar and cafeteria information Campus loads.') + `<section class="card setup-card"><div class="headline label-line">${icon('download')}Already use Campus on Mac?</div><div class="caption sub">Choose Import from Mac app, then choose Send to Campus Web… in the Mac app and type the 8-character code it shows. Campus will ask before replacing browser data. Google sign-in is not transferred.</div><div>${btn('Import from Mac app…', {action: 'import-from-app', sym: 'download'})}</div></section><section class="card setup-card"><div class="headline">School division</div>${segmented(['ES', 'MS', 'HS'].map(d => [d, d]), state.division, 'setup-division')}<div class="caption sub">${descriptions[state.division]}</div></section>`;
     else if (step === 1) body = heading('calClock', 'Set up your schedule', 'Campus can import all ten Monday–Friday A/B schedules from the PowerSchool pages you copy into this browser.') + `${!needsSetup ? `<div class="success-banner">${icon('checkCircleFill')}<div><strong>All 10 schedules synced</strong><span class="subheadline sub">Monday–Friday A/B schedules are ready to use.</span></div></div>` : ''}${syncContent()}<div class="button-row">${syncButton('prominent')}</div>`;
     else if (step === 2) body = heading('books', 'Bring in your homework', 'Connect Google Classroom to show upcoming assignments in Today, Homework, and Calendar.') + `<section class="card setup-card"><div class="headline label-line">${icon(connected ? 'checkCircleFill' : 'personPlus')}${connected ? 'Google Classroom is connected' : 'Connect your school Google account'}</div><div class="caption sub">Campus requests access to your classes and coursework. Your Google password is entered only on Google’s sign-in page.</div>${connected ? '' : `<div>${btn('Connect Google Classroom', {action: 'google-connect', kind: 'prominent', sym: 'link'})}</div>`}</section><div class="caption sub">${esc(classroomStatusText())}</div>${classroomError ? notice(classroomError, 'warn') : ''}`;
     else {
@@ -737,16 +784,15 @@
   document.addEventListener('pointercancel', () => { menuDrag?.view.classList.remove('dragging'); menuDrag = null; });
 
   // Events
-  document.addEventListener('paste', e => {
-    if (!e.target.closest('[data-paste-transfer]')) return;
-    e.preventDefault();
-    CampusTransfer.fromClipboardCode(e.clipboardData?.getData('text/plain') || '').then(snapshot => {
-      closeLayer();
-      presentTransfer({snapshot, error: null, unrequested: false, nonce: null});
-    }, error => { pasteError = error.message; drawLayers(); });
-  });
   document.addEventListener('paste', e => { const target = e.target.closest('[data-paste]'); if (!target) return; e.preventDefault(); parsePaste(target.dataset.paste, e.clipboardData?.getData('text/html') || e.clipboardData?.getData('text/plain') || ''); });
   document.addEventListener('input', e => {
+    if (e.target.matches('[data-code-input]')) {
+      const raw = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+      receiveState.value = raw.length > 4 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : raw; receiveState.error = '';
+      e.target.value = receiveState.value;
+      const ready = document.querySelector('[data-action="receive-code"]'); if (ready) ready.disabled = !raw;
+      return;
+    }
     const t = e.target, bind = t.dataset.bind;
     if (t.dataset.colorTarget) return setColor(t.dataset.colorTarget, t.value.toUpperCase());
     switch (bind) {
@@ -796,10 +842,11 @@
     switch (a) {
       case 'close': closeLayer(); if (!layers.length) render(); break;
       case 'alert': { const layer = layers.at(-1); closeLayer(); layer.buttons[Number(t.dataset.index)]?.run?.(); break; }
-      case 'import-from-app': try { CampusTransfer.requestAppExport(); } catch (error) { toast(error.message); } break;
+      case 'import-from-app': openReceiveSheet(); break;
+      case 'receive-code': submitCode(); break;
+      case 'copy-code': navigator.clipboard?.writeText(sendState?.code || '').then(() => toast('Code copied.'), () => toast('Could not copy the code.')); break;
       case 'hide-app-promo': hideAppPromo(); break;
-      case 'send-to-app': hideAppPromo(); CampusTransfer.linkForApp(state).then(({url}) => { location.href = url; }, error => toast(error.message)); break;
-      case 'import-via-clipboard': importViaClipboard(); break;
+      case 'send-to-app': startSend(); break;
 
       case 'appearance': state.appearance = value; save(); render(); break;
       case 'setup-division': case 'division': state.division = value; if (a === 'setup-division') state.club.enabled = value === 'MS'; save(); render(); refreshCalendar(true); if (a === 'division') refreshCafeteria(true); break;
@@ -888,7 +935,7 @@
       case 'export-data': { const blob = new Blob([JSON.stringify(state, null, 2)], {type: 'application/json'}), url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = `campus-backup-${dateKey()}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 5000); break; }
     }
   });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && layers.length && !layers.at(-1).alert) { closeLayer(); render(); } });
+  document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches?.('[data-code-input]')) { e.preventDefault(); submitCode(); return; } if (e.key === 'Escape' && layers.length && !layers.at(-1).alert) { closeLayer(); render(); } });
   window.addEventListener('hashchange', () => { const next = location.hash.slice(1); if (pages.some(p => p[0] === next) && next !== page) { page = next; render(); } });
   window.addEventListener('resize', () => { if (page === 'calendar') render(); });
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (state.appearance === 'system') theme(); });
@@ -904,40 +951,20 @@
       state.setupComplete = true; state.setupStep = 3;
       if (!save()) { state = previous; return; }
       CampusGoogle.disconnect();
-      if (pendingTransferNonce) try { CampusTransfer.markUsed(pendingTransferNonce); } catch {}
       hideAppPromo();
-      pendingTransfer = null; pendingTransferNonce = null; closeAllLayers(); go('homework'); toast('Mac data imported. Connect Google Classroom again to resume syncing.');
+      pendingTransfer = null; closeAllLayers(); go('homework'); toast('Mac data imported. Connect Google Classroom again to resume syncing.');
     } catch (error) { toast(error.message); }
   }
-  function presentTransfer(receivedTransfer) {
-    if (receivedTransfer?.error) {
-      // A link cut short on the way here: the clipboard carries everything instead.
-      if (/cut off/.test(receivedTransfer.error)) {
-        openAlert('The transfer was cut off', `${receivedTransfer.error} Import everything through the clipboard instead? Nothing is left out that way.`,
-          [{label: 'Import via Clipboard', role: 'default', run: importViaClipboard}, {label: 'Cancel'}]);
-      } else openAlert('Campus transfer failed', receivedTransfer.error, [{label: 'OK', role: 'default'}]);
-      return;
-    }
-    if (!receivedTransfer?.snapshot) return;
-    pendingTransfer = receivedTransfer.snapshot;
-    pendingTransferNonce = receivedTransfer.nonce;
-    const snapshot = pendingTransfer;
+  function presentTransfer(snapshot) {
+    if (!snapshot) return;
+    pendingTransfer = snapshot;
     const count = Object.values(snapshot.schedules).reduce((total, classes) => total + classes.length, 0);
-    const cancel = {label: 'Cancel', run: () => { pendingTransfer = null; pendingTransferNonce = null; }};
+    const cancel = {label: 'Cancel', run: () => { pendingTransfer = null; }};
     const summary = `${count} classes, ${snapshot.homework.length} homework items, ${snapshot.trash?.length || 0} Trash items, ${snapshot.events.length} calendar events and ${Object.keys(snapshot.customDays).length} custom days`;
-    const warning = receivedTransfer.unrequested ? 'This browser did not start the transfer. Continue only if you just approved sending from your Mac. ' : '';
-    if (Number(snapshot.omitted) > 0) {
-      // The link couldn't carry everything: recommend the clipboard, which leaves nothing out.
-      openAlert('Some items didn\'t fit', `${warning}${snapshot.omitted} older items were left out to fit the transfer link. Import everything through the clipboard instead? Otherwise this browser's data is replaced with the ${summary} that fit. Google sign-in will be disconnected; sign in again here after import.`, [
-        {label: 'Import Everything via Clipboard', role: 'default', run: () => { pendingTransfer = null; pendingTransferNonce = null; importViaClipboard(); }},
-        {label: 'Replace Without Them', role: 'destructive', run: applyTransfer}, cancel]);
-      return;
-    }
     openAlert('Import from Campus for Mac?',
-      `${warning}Replace this browser's schedules, homework, Trash, custom days, club and personal calendar events with ${summary}. Google sign-in will be disconnected; sign in again here after import.`,
+      `Replace this browser's schedules, homework, Trash, custom days, club and personal calendar events with ${summary}. Google sign-in will be disconnected; sign in again here after import.`,
       [{label: 'Replace Data', role: 'default destructive', run: applyTransfer}, cancel]);
   }
-  CampusTransfer.receiveIncoming().then(presentTransfer);
   if (!state.remoteUpdated || Date.now() - new Date(state.remoteUpdated).getTime() > 3600000) refreshCalendar(true);
   menuWorker().then(worker => { if (worker) Object.values(state.cafeteria).forEach(menuImage => cacheMenuImage(menuImage?.image)); });
   if (state.setupComplete) refreshCafeteria(true);

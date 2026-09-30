@@ -1,9 +1,7 @@
 (() => {
   'use strict';
 
-  const MAX_BYTES = 256000;
-  const PENDING_KEY = 'campus.web.transfer.pending.v1';
-  const USED_KEY = 'campus.web.transfer.used.v1';
+  const MAX_BYTES = 10000000;
   const DAY_KEYS = ['MA', 'MB', 'TA', 'TB', 'WA', 'WB', 'ThA', 'ThB', 'FA', 'FB'];
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder('utf-8', {fatal: true});
@@ -112,13 +110,7 @@
     return snapshot;
   }
 
-  // Transfers travel inside the link itself: JSON, raw-deflated, base64url encoded. Links are
-  // kept to MAX_LINK_CHARS so browsers and macOS pass them to the other app intact.
-  const MAX_LINK_CHARS = 24000;
-  // Clipboard transfers carry everything; this only guards against absurd input.
-  const MAX_CLIPBOARD_BYTES = 10000000;
-  const CLIPBOARD_PREFIX = 'CAMPUS-TRANSFER-1:';
-  const TRUNCATED = 'The transfer link was cut off before it reached Campus. Nothing was changed.';
+  const DAMAGED = 'This Campus transfer is damaged. Nothing was changed.';
   const toBase64Url = bytes => {
     let binary = '';
     for (let offset = 0; offset < bytes.length; offset += 8192) {
@@ -126,8 +118,8 @@
     }
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   };
-  const fromBase64Url = (value, maxChars = MAX_LINK_CHARS * 2) => {
-    if (typeof value !== 'string' || !value || value.length > maxChars || !/^[A-Za-z0-9_-]+$/.test(value)) throw Error(TRUNCATED);
+  const fromBase64Url = (value, maxChars) => {
+    if (typeof value !== 'string' || !value || value.length > maxChars || !/^[A-Za-z0-9_-]+$/.test(value)) throw Error(DAMAGED);
     const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4));
     return Uint8Array.from(binary, char => char.charCodeAt(0));
   };
@@ -141,7 +133,7 @@
     let size = 0;
     for (;;) {
       let result;
-      try { result = await reader.read(); } catch { throw Error(TRUNCATED); }
+      try { result = await reader.read(); } catch { throw Error(DAMAGED); }
       if (result.done) break;
       size += result.value.length;
       if (size > maxBytes) { reader.cancel(); throw Error('This Campus transfer is too large. Nothing was changed.'); }
@@ -196,68 +188,112 @@
     }
     return {...rest, schedules};
   }
-  async function pack(snapshot, maxBytes = MAX_BYTES) {
-    const bytes = textEncoder.encode(JSON.stringify(compactDays(snapshot)));
-    return bytes.length > maxBytes ? null : toBase64Url(await deflate(bytes));
-  }
-  const schoolDay = (instant = new Date()) => {
-    const fields = Object.fromEntries(new Intl.DateTimeFormat('en-US', {timeZone:'Asia/Seoul',
-      year:'numeric', month:'2-digit', day:'2-digit'}).formatToParts(instant)
-      .filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
-    return `${fields.year}-${fields.month}-${fields.day}`;
-  };
 
-  // Items in the order they are left out when a transfer is too large: least useful first,
-  // so whatever still fits is the most recent and relevant data. Schedules, rotation and club
-  // always travel.
-  function dropOrder(snapshot, now = new Date()) {
-    const today = schoolDay(now), nowTime = now.getTime();
-    const due = snapshot.homework.map(item => Date.parse(item.due) || 0);
-    const eventEnd = snapshot.events.map(item => item.end || item.start);
-    const homework = snapshot.homework.map((item, index) => index);
-    const events = snapshot.events.map((item, index) => index);
-    const days = Object.keys(snapshot.customDays);
-    return [
-      ...homework.filter(i => snapshot.homework[i].complete).sort((a, b) => due[a] - due[b]).map(i => ['homework', i]),
-      ...events.filter(i => eventEnd[i] < today).sort((a, b) => eventEnd[a].localeCompare(eventEnd[b])).map(i => ['events', i]),
-      ...days.filter(day => day < today).sort().map(day => ['customDays', day]),
-      ...homework.filter(i => !snapshot.homework[i].complete && due[i] < nowTime).sort((a, b) => due[a] - due[b]).map(i => ['homework', i]),
-      ...homework.filter(i => !snapshot.homework[i].complete && due[i] >= nowTime).sort((a, b) => due[b] - due[a]).map(i => ['homework', i]),
-      ...events.filter(i => eventEnd[i] >= today).sort((a, b) => snapshot.events[b].start.localeCompare(snapshot.events[a].start)).map(i => ['events', i]),
-      ...days.filter(day => day >= today).sort().reverse().map(day => ['customDays', day])
-    ];
-  }
-  function without(snapshot, drops) {
-    const gone = {homework: new Set(), events: new Set(), customDays: new Set()};
-    for (const [group, key] of drops) gone[group].add(key);
-    return {...snapshot,
-      homework: snapshot.homework.filter((item, index) => !gone.homework.has(index)),
-      events: snapshot.events.filter((item, index) => !gone.events.has(index)),
-      customDays: Object.fromEntries(Object.entries(snapshot.customDays).filter(([day]) => !gone.customDays.has(day)))};
-  }
+  // A transfer is protected by an 8-character code shown on the sending device. The code never
+  // leaves the two devices: both derive a lookup ID and an AES-256-GCM key from it, so the server
+  // holds only ciphertext that expires after five minutes.
+  const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const CODE_LENGTH = 8;
+  const SALT = 'campus-transfer-v1';
+  const ITERATIONS = 600000;
+  const FORMAT_VERSION = 1;
+  const LIFETIME_MS = 300000;
+  const MAX_PAYLOAD_CHARS = 2600000;
+  const bytesToHex = bytes => [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
 
-  // Returns {payload, omitted}; leaves out the oldest items when everything won't fit a link.
-  async function encode(snapshot, now = new Date()) {
-    validate(snapshot);
-    const full = await pack(snapshot);
-    if (full && full.length <= MAX_LINK_CHARS) return {payload: full, omitted: 0};
-    const drops = dropOrder(snapshot, now);
-    let low = 1, high = drops.length, best = null;
-    while (low <= high) {
-      const mid = (low + high) >> 1;
-      const packed = await pack({...without(snapshot, drops.slice(0, mid)), omitted: mid});
-      if (packed && packed.length <= MAX_LINK_CHARS) { best = {payload: packed, omitted: mid}; high = mid - 1; }
-      else low = mid + 1;
+  function newCode() {
+    let code = '';
+    const limit = 256 - 256 % ALPHABET.length;
+    while (code.length < CODE_LENGTH) {
+      for (const byte of crypto.getRandomValues(new Uint8Array(32))) {
+        if (byte < limit && code.length < CODE_LENGTH) code += ALPHABET[byte % ALPHABET.length];
+      }
     }
-    if (!best) throw Error('Too much data for a transfer link, even after leaving out older items.');
-    return best;
+    return code;
+  }
+  const formatCode = code => `${code.slice(0, 4)}-${code.slice(4)}`;
+  function normalizeCode(text) {
+    const code = String(text || '').toUpperCase().replace(/[\s-]/g, '');
+    if (code.length !== CODE_LENGTH || [...code].some(char => !ALPHABET.includes(char))) {
+      throw Error('Enter the 8-character code shown in Campus for Mac.');
+    }
+    return code;
+  }
+  async function derive(code) {
+    const base = await crypto.subtle.importKey('raw', textEncoder.encode(code), 'PBKDF2', false, ['deriveBits']);
+    const master = await crypto.subtle.deriveBits(
+      {name: 'PBKDF2', hash: 'SHA-256', salt: textEncoder.encode(SALT), iterations: ITERATIONS}, base, 256);
+    const hmac = await crypto.subtle.importKey('raw', master, {name: 'HMAC', hash: 'SHA-256'}, false, ['sign']);
+    const part = async label => new Uint8Array(await crypto.subtle.sign('HMAC', hmac, textEncoder.encode(label)));
+    const key = await crypto.subtle.importKey('raw', await part('campus-transfer-key'), 'AES-GCM', false, ['encrypt', 'decrypt']);
+    return {id: bytesToHex(await part('campus-transfer-id')).slice(0, 32), key};
+  }
+  // Payload = base64url(version 1 | 12-byte nonce | AES-GCM(deflate(JSON))).
+  async function seal(snapshot, key) {
+    const json = textEncoder.encode(JSON.stringify(compactDays(snapshot)));
+    if (json.length > MAX_BYTES) throw Error('There is too much data to transfer. Nothing was sent.');
+    const nonce = crypto.getRandomValues(new Uint8Array(12));
+    const encrypted = new Uint8Array(await crypto.subtle.encrypt({name: 'AES-GCM', iv: nonce}, key, await deflate(json)));
+    const sealed = new Uint8Array(1 + nonce.length + encrypted.length);
+    sealed[0] = FORMAT_VERSION; sealed.set(nonce, 1); sealed.set(encrypted, 1 + nonce.length);
+    return toBase64Url(sealed);
+  }
+  async function open(payload, key) {
+    let sealed;
+    try { sealed = fromBase64Url(payload, MAX_PAYLOAD_CHARS); } catch { fail(); }
+    if (sealed.length < 30 || sealed[0] !== FORMAT_VERSION) throw Error('This transfer was created by an unsupported Campus version.');
+    let compressed;
+    try { compressed = new Uint8Array(await crypto.subtle.decrypt({name: 'AES-GCM', iv: sealed.slice(1, 13)}, key, sealed.slice(13))); }
+    catch { throw Error('This transfer could not be decrypted, so nothing was changed.'); }
+    let snapshot;
+    try { snapshot = JSON.parse(textDecoder.decode(await inflate(compressed))); } catch (error) {
+      throw error.message?.includes('too large') ? error : Error(DAMAGED);
+    }
+    return validate(expandDays(snapshot));
   }
 
-  async function decode(payload, maxBytes = MAX_BYTES) {
-    const json = await inflate(fromBase64Url(payload, maxBytes === MAX_BYTES ? MAX_LINK_CHARS * 2 : maxBytes * 2), maxBytes);
-    let snapshot;
-    try { snapshot = JSON.parse(textDecoder.decode(json)); } catch { throw Error(TRUNCATED); }
-    return validate(expandDays(snapshot));
+  async function call(action, id, payload) {
+    let response;
+    try {
+      response = await fetch('/api/transfer', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action, id, payload}), cache: 'no-store'});
+    } catch { throw Error("Couldn't reach Campus. Check your internet connection and try again."); }
+    const body = await response.json().catch(() => ({}));
+    if (response.ok) return body;
+    const error = Error(response.status === 404 ? "That code wasn't found. Codes work once and expire after 5 minutes, so ask Campus for Mac for a new one."
+      : response.status === 413 ? 'There is too much data to transfer. Nothing was sent.'
+      : body.error || 'Campus transfer failed.');
+    error.status = response.status;
+    throw error;
+  }
+
+  function hasTransferableData(snapshot) {
+    return Boolean(snapshot.rotation || Object.values(snapshot.schedules).some(classes => classes.length) ||
+      snapshot.homework.length || snapshot.events.length || snapshot.club.enabled ||
+      snapshot.trash?.length ||
+      Object.keys(snapshot.customDays).length);
+  }
+
+  // Encrypts this browser's data, uploads it, and returns the code to enter in Campus for Mac.
+  async function send(state) {
+    const snapshot = fromWebState(state);
+    if (!hasTransferableData(snapshot)) throw Error('There is no Campus data in this browser to send yet. Add a schedule, homework, event or club first.');
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const code = newCode(), {id, key} = await derive(code);
+      const payload = await seal(snapshot, key);
+      if (payload.length > MAX_PAYLOAD_CHARS) throw Error('There is too much data to transfer. Nothing was sent.');
+      try { await call('upload', id, payload); }
+      catch (error) { if (error.status === 409) continue; throw error; }
+      return {code: formatCode(code), expiresAt: Date.now() + LIFETIME_MS};
+    }
+    throw Error('Campus could not reserve a code. Try again.');
+  }
+
+  // Fetches and decrypts what Campus for Mac sent under this code.
+  async function receive(text) {
+    const {id, key} = await derive(normalizeCode(text));
+    const {payload} = await call('claim', id);
+    return open(payload, key);
   }
 
   function fromWebState(state) {
@@ -380,79 +416,6 @@
       snapshot.trash?.length ||
       Object.keys(snapshot.customDays).length);
   }
-
-  // Campus for Mac copies everything, nothing left out, as a code to paste here.
-  async function fromClipboardCode(text) {
-    const code = String(text || '').trim();
-    if (!code.startsWith(CLIPBOARD_PREFIX)) throw Error("That isn't Campus data. Let Campus for Mac copy your data first, then paste here.");
-    return decode(code.slice(CLIPBOARD_PREFIX.length), MAX_CLIPBOARD_BYTES);
-  }
-
-  let incomingLink = null;
-  if (location.hash.startsWith('#campus-transfer-z=')) {
-    const values = new URLSearchParams(location.hash.slice(1));
-    incomingLink = {payload: values.get('campus-transfer-z'), nonce: values.get('nonce')};
-    history.replaceState(null, '', `${location.pathname}${location.search}#settings`);
-  } else if (location.hash.startsWith('#campus-transfer-id=') || location.hash.startsWith('#campus-transfer=')) {
-    // Older Mac apps uploaded transfers to a server that no longer exists.
-    incomingLink = {legacy: true};
-    history.replaceState(null, '', `${location.pathname}${location.search}#settings`);
-  }
-
-  async function receiveIncoming() {
-    const link = incomingLink;
-    incomingLink = null;
-    if (!link) return null;
-    if (link.legacy) return {snapshot: null, error: 'This transfer came from an older version of Campus for Mac. Update the Mac app and send it again.'};
-    try {
-      const nonce = link.nonce;
-      const pending = JSON.parse(localStorage.getItem(PENDING_KEY) || 'null');
-      localStorage.removeItem(PENDING_KEY);
-      if (!/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(nonce || '')) fail();
-      let used = [];
-      try { used = JSON.parse(localStorage.getItem(USED_KEY) || '[]'); } catch { used = []; }
-      if (Array.isArray(used) && used.includes(nonce)) throw Error('This Campus transfer has already been imported in this browser.');
-      const activeRequest = pending && Date.now() >= pending.createdAt &&
-        Date.now() - pending.createdAt <= 300000;
-      if (activeRequest && pending.nonce !== nonce) {
-        throw Error('This transfer does not match the current request in this browser. Start again.');
-      }
-      return {snapshot: await decode(link.payload), error: null, unrequested: !activeRequest, nonce};
-    } catch (error) {
-      return {snapshot: null, error: error.message || 'Campus transfer failed.'};
-    }
-  }
-
-  function markUsed(nonce) {
-    let used = [];
-    try { used = JSON.parse(localStorage.getItem(USED_KEY) || '[]'); } catch { used = []; }
-    if (!Array.isArray(used)) used = [];
-    localStorage.setItem(USED_KEY, JSON.stringify([...used.filter(value => value !== nonce), nonce].slice(-20)));
-  }
-
-  function requestAppExport() {
-    const hosted = location.protocol === 'https:' &&
-      ['campus.vin', 'www.campus.vin'].includes(location.hostname) &&
-      ['/', '/index.html'].includes(location.pathname);
-    const local = location.protocol === 'http:' &&
-      ['127.0.0.1', 'localhost'].includes(location.hostname) &&
-      ['/', '/index.html'].includes(location.pathname);
-    if (!hosted && !local) throw Error('Open Campus Web on campus.vin, or use a local development server with a Debug Mac app.');
-    const nonce = crypto.randomUUID();
-    localStorage.setItem(PENDING_KEY, JSON.stringify({nonce, createdAt: Date.now()}));
-    const callback = hosted ? `${location.origin}/` : `${location.origin}${location.pathname}`;
-    location.href = `campus://export?callback=${encodeURIComponent(callback)}&nonce=${encodeURIComponent(nonce)}`;
-  }
-
-  // The campus:// link for the Mac app, and how many older items had to be left out of it.
-  async function linkForApp(state) {
-    const snapshot = fromWebState(state);
-    if (!hasTransferableData(snapshot)) throw Error('There is no Campus data in this browser to send yet. Add a schedule, homework, event or club first.');
-    const {payload, omitted} = await encode(snapshot);
-    return {url: `campus://import?z=${payload}`, omitted};
-  }
-
-  window.CampusTransfer = {encode, decode, validate, fromWebState, toWebState,
-    receiveIncoming, markUsed, requestAppExport, linkForApp, fromClipboardCode,
-    requestAppCopy: () => { location.href = 'campus://copy'; }};
+  window.CampusTransfer = {send, receive, validate, fromWebState, toWebState, hasTransferableData,
+    newCode, formatCode, normalizeCode, derive, seal, open, LIFETIME_MS};
 })();
