@@ -127,6 +127,23 @@
   function rotationAt(iso) { if (!state.rotation || dayIndex(iso) > 4) return null; let day = state.rotation.date, n = 0, dir = iso >= day ? 1 : -1, guard = 0; while (day !== iso && guard++ < 1400) { day = plusDays(day, dir); if (dayIndex(day) < 5) n++; } if (guard >= 1400) return null; return n % 2 ? (state.rotation.day === 'A' ? 'B' : 'A') : state.rotation.day; }
   function scheduleKey(iso) { const day = rotationAt(iso), index = dayIndex(iso); return day && index < 5 ? KEYS[index * 2 + (day === 'B' ? 1 : 0)] : null; }
   function lastFriday(iso) { return dayIndex(iso) === 4 && plusDays(iso, 7).slice(0, 7) !== iso.slice(0, 7); }
+  // MS only: when PowerSchool shows no A/B letter, count from the anchors in kisj.space/msday.set ({"2026-10-5": "A"}).
+  const isBreakDay = iso => allEvents().some(e => e.type === 'break' && iso >= e.start && iso <= (e.end || e.start));
+  const isSchoolDay = iso => dayIndex(iso) < 5 && !isBreakDay(iso);
+  function letterFromAnchor(anchor, iso) { let day = anchor.date, n = 0, dir = iso >= day ? 1 : -1, guard = 0; while (day !== iso && guard++ < 1400) { day = plusDays(day, dir); if (isSchoolDay(day)) n++; } return guard >= 1400 ? null : n % 2 ? (anchor.day === 'A' ? 'B' : 'A') : anchor.day; }
+  async function msDayAnchor() {
+    try {
+      const r = await fetch('https://kisj.space/msday.set', {cache: 'no-store'}); if (!r.ok) return null;
+      const anchors = Object.entries(JSON.parse((await r.text()).replace(/'/g, '"'))).map(([key, value]) => ({date: validDate(key), day: String(value).trim().charAt(0).toUpperCase()})).filter(a => a.date && (a.day === 'A' || a.day === 'B'));
+      if (!anchors.length) return null;
+      for (let back = 0, iso = dateKey(); back < 15; back++, iso = plusDays(iso, -1)) {
+        if (!isSchoolDay(iso)) continue;
+        const nearest = anchors.reduce((best, a) => Math.abs(dateObj(a.date) - dateObj(iso)) < Math.abs(dateObj(best.date) - dateObj(iso)) ? a : best), day = letterFromAnchor(nearest, iso);
+        return day ? {date: iso, day} : null;
+      }
+    } catch {}
+    return null;
+  }
   const dayKind = iso => dayIndex(iso) !== 4 ? null : lastFriday(iso) ? 'Last Friday' : 'Friday';
   const lateTimes = [['10:00', '10:40'], ['10:45', '11:25'], ['11:30', '12:10'], ['12:10', '12:45'], ['12:45', '13:25'], ['13:30', '14:10'], ['14:15', '14:55'], ['15:00', '15:40']];
   const byStart = list => [...list].sort((a, b) => minutes(a.start) - minutes(b.start) || String(a.subject).localeCompare(String(b.subject)));
@@ -346,8 +363,9 @@
     const pageStep = (kind, title, url, copy) => `<div class="paste-step"><div class="paste-step-head"><strong>${title}</strong>${draft[kind] ? pill(kind === 'week' ? `${Object.keys(draft.week.times).length} days of times` : '10 A/B schedules', true) : ''}</div><p class="caption sub">${copy}</p><div class="paste-actions"><a class="btn outline" href="${url}" target="_blank" rel="noopener noreferrer">${icon('compass')}<span>Open ${title}</span></a>${btn('Paste copied page', {action: 'read-clipboard', attrs: `data-kind="${kind}"`})}<label class="btn outline" for="file-${kind}"><span>Choose saved HTML</span></label><input class="sync-file" id="file-${kind}" type="file" data-kind="${kind}" accept=".html,.htm,text/html" hidden></div><textarea class="paste-zone ${draft[kind] ? 'ready' : ''}" data-paste="${kind}" aria-label="Paste ${title}" placeholder="${draft[kind] ? `${title} ready` : 'Click here and press ⌘V (or Ctrl+V)'}"></textarea></div>`;
     const status = ready ? 'Both pages were read. Review the schedules below, then sync.' : draft.matrix || draft.week ? 'Waiting for the remaining page.' : 'Copy the PowerSchool page with ⌘A then ⌘C, then paste it here.';
     const summary = ready ? `<div class="summary-grid card">${KEYS.map((k, i) => `<div class="summary-row"><span class="summary-day">${DAYS[Math.floor(i / 2)]}</span>${pill(k.endsWith('A') ? 'A' : 'B', true)}<span class="caption faint mono">${draft.matrix.schedules[k].length} classes</span></div>`).join('')}</div>` : '';
-    const manual = ready && !anchor ? `<div class="manual-rotation"><div><div class="subheadline strong">Choose one known day from this week</div><div class="caption sub">PowerSchool sometimes omits the A/B label on weekends. Choose a Monday–Friday day from this week and its A/B rotation. On Saturday or Sunday, use the weekdays that just passed, not next week.</div></div><div class="manual-row"><span class="caption sub">Weekday</span>${segmented(DAYS.map((d, i) => [i, d]), fallbackWeekday, 'fallback-weekday')}</div><div class="manual-row"><span class="caption sub">Rotation</span>${segmented([['A', 'A Day'], ['B', 'B Day']], fallbackDay, 'fallback-day', 'style="width:190px"')}</div></div>` : '';
-    return `<div class="card instructions">${instruction(1, `Open ${ms ? 'Matrix View' : 'Week View and Matrix View'} in PowerSchool. Sign in there if it asks.`)}${instruction(2, 'On each page, press ⌘A then ⌘C once the schedule has fully loaded.')}${instruction(3, `Paste below, then press ${actionTitle}.`)}<div class="hairline"></div>${ms ? '' : pageStep('week', 'Week View', WEEK, 'Class start and end times for Monday–Friday.')}${pageStep('matrix', 'Matrix View', MATRIX, ms ? 'Courses, rooms and teachers for all ten A/B days. MS times are filled in automatically.' : 'Courses, rooms and teachers for all ten A/B days.')}</div>${notice('Campus reads the copied page inside this browser. It never receives your PowerSchool password or cookies.', 'shield')}<div class="status-block">${micro('Status')}<div class="subheadline sub">${esc(status)}</div>${draft.error ? notice(draft.error, 'warn') : ''}${manual}${summary}</div>`;
+    const auto = ready && !anchor && draft.auto ? `<div class="card"><div class="caption sub">PowerSchool shows no A/B day, so Campus used kisj.space/msday.set: ${esc(draft.auto.date)} is ${draft.auto.day} Day.</div></div>` : '';
+    const manual = ready && !anchor && !draft.auto ? `<div class="manual-rotation"><div><div class="subheadline strong">Choose one known day from this week</div><div class="caption sub">PowerSchool sometimes omits the A/B label on weekends. Choose a Monday–Friday day from this week and its A/B rotation. On Saturday or Sunday, use the weekdays that just passed, not next week.</div></div><div class="manual-row"><span class="caption sub">Weekday</span>${segmented(DAYS.map((d, i) => [i, d]), fallbackWeekday, 'fallback-weekday')}</div><div class="manual-row"><span class="caption sub">Rotation</span>${segmented([['A', 'A Day'], ['B', 'B Day']], fallbackDay, 'fallback-day', 'style="width:190px"')}</div></div>` : '';
+    return `<div class="card instructions">${instruction(1, `Open ${ms ? 'Matrix View' : 'Week View and Matrix View'} in PowerSchool. Sign in there if it asks.`)}${instruction(2, 'On each page, press ⌘A then ⌘C once the schedule has fully loaded.')}${instruction(3, `Paste below, then press ${actionTitle}.`)}<div class="hairline"></div>${ms ? '' : pageStep('week', 'Week View', WEEK, 'Class start and end times for Monday–Friday.')}${pageStep('matrix', 'Matrix View', MATRIX, ms ? 'Courses, rooms and teachers for all ten A/B days. MS times are filled in automatically.' : 'Courses, rooms and teachers for all ten A/B days.')}</div>${notice('Campus reads the copied page inside this browser. It never receives your PowerSchool password or cookies.', 'shield')}<div class="status-block">${micro('Status')}<div class="subheadline sub">${esc(status)}</div>${draft.error ? notice(draft.error, 'warn') : ''}${manual}${auto}${summary}</div>`;
   }
   const syncButton = (kind = 'outline') => btn(syncActionTitle(), {action: 'sync-save', kind, sym: state.rotation?.lastSyncedAt ? 'refresh' : 'checkCircle', disabled: !syncReady()});
   function syncSheet() {
@@ -356,11 +374,11 @@
   }
   const instruction = (n, text) => `<div class="instruction"><span class="instruction-number">${n}</span><span class="subheadline sub">${esc(text)}</span></div>`;
   function openSync() { draft = {week: null, matrix: null, error: ''}; openSheet(syncSheet, 'wide'); }
-  function parsePaste(kind, html) { try { draft[kind] = kind === 'week' ? PowerSchoolImport.parseWeek(html) : PowerSchoolImport.parseMatrix(html); draft.error = ''; render(); toast(`${kind === 'week' ? 'Week View' : 'Matrix View'} copied successfully.`); } catch (e) { draft.error = e.message; render(); } }
+  function parsePaste(kind, html) { try { draft[kind] = kind === 'week' ? PowerSchoolImport.parseWeek(html) : PowerSchoolImport.parseMatrix(html); draft.error = ''; draft.auto = null; render(); toast(`${kind === 'week' ? 'Week View' : 'Matrix View'} copied successfully.`); if (state.division === 'MS' && kind === 'matrix' && !draft.matrix.anchor) { const pasted = draft; msDayAnchor().then(auto => { if (auto && draft === pasted && !pasted.matrix?.anchor) { pasted.auto = auto; render(); } }); } } catch (e) { draft.error = e.message; render(); } }
   function saveSync() {
     try {
       const monday = draft.week?.monday || plusDays(dateKey(), -dayIndex(dateKey()));
-      const fallback = {date: plusDays(monday, Number(fallbackWeekday)), day: fallbackDay};
+      const fallback = draft.auto || {date: plusDays(monday, Number(fallbackWeekday)), day: fallbackDay};
       const result = state.division === 'MS' ? PowerSchoolImport.buildMiddleSchool(draft.matrix, fallback) : PowerSchoolImport.build(draft.week, draft.matrix, fallback, state.schedules);
       state.schedules = result.schedules; state.rotation = result.rotation;
       if (!save()) return;
