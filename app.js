@@ -166,6 +166,13 @@
   }
   const nowMinutes = () => { const p = parts(); return Number(p.hour) * 60 + Number(p.minute) + Number(p.second) / 60; };
   const currentClass = () => { const now = nowMinutes(); return classesOn(dateKey()).find(c => minutes(c.start) <= now && now < minutes(c.end)); };
+  // After Friday's classes (and all weekend) the first class of the next school day, normally Monday.
+  function firstClassNextWeek() {
+    const iso = dateKey(), index = dayIndex(iso);
+    if (!((index === 4 && classesOn(iso).every(c => minutes(c.end) <= nowMinutes())) || index >= 5)) return null;
+    for (let n = 1; n <= 10; n++) { const day = plusDays(iso, n); if (dayIndex(day) > 4) continue; const first = classesOn(day)[0]; if (first) return {c: first, iso: day, shift: n * 1440}; }
+    return null;
+  }
   const nextClass = () => { const now = nowMinutes(); return classesOn(dateKey()).find(c => minutes(c.start) > now); };
   const needsScheduleSetup = () => !state.rotation?.lastSyncedAt && Object.values(state.schedules).every(list => !list?.length) && !Object.keys(state.customDays).length;
   const typeLabel = t => ({break: 'No school', half: 'Half day', info: 'Information', late: 'Late start'})[t] || 'Information';
@@ -264,18 +271,19 @@
 
   // Today
   function todayView() {
-    const iso = dateKey(), now = nowMinutes(), current = currentClass(), next = nextClass(), due = dueSoon(), menuImage = state.cafeteria[state.division];
+    const iso = dateKey(), now = nowMinutes(), current = currentClass(), next = nextClass(), nextWeek = firstClassNextWeek(), due = dueSoon(), menuImage = state.cafeteria[state.division];
     const upcoming = allEvents().filter(e => (e.end || e.start) >= iso).sort((a, b) => a.start.localeCompare(b.start)).slice(0, 4);
-    const column = (title, c, {emptyTitle, emptyMessage, prefix, useEnd, progress, opens}) => `<div class="status-column">${micro(title)}${c ? `${opens ? `<button type="button" class="class-title-button" data-action="show-day" title="Show today's full schedule"><span class="class-title">${esc(c.subject)}</span>${icon('chevronRight')}</button>` : `<div class="class-title">${esc(c.subject)}</div>`}<div class="subheadline sub">${esc(detailText(c))}</div><div class="caption faint mono">${esc(c.start)} – ${esc(c.end)}</div><div class="countdown">${prefix} ${countdownText(minutes(useEnd ? c.end : c.start))}</div>${progress ? progressBar((now - minutes(c.start)) / (minutes(c.end) - minutes(c.start))) : ''}` : `<div class="empty-title">${esc(emptyTitle)}</div><div class="subheadline sub">${esc(emptyMessage)}</div>`}</div>`;
-    const nowNext = card('Now / Next', 'clock', `<div class="now-next">${column('Right Now', current, {emptyTitle: 'No class', emptyMessage: 'Campus will watch for the next scheduled class.', prefix: 'Ends in', useEnd: true, progress: true, opens: true})}<span class="vertical-rule"></span>${column('Up Next', next, {emptyTitle: 'Done', emptyMessage: 'No more classes are scheduled today.', prefix: 'Begins in', useEnd: false})}</div>`);
+    const column = (title, c, {emptyTitle, emptyMessage, prefix, useEnd, progress, opens, shift = 0, dayLabel = ''}) => `<div class="status-column">${micro(title)}${c ? `${opens ? `<button type="button" class="class-title-button" data-action="${shift ? 'show-next-day' : 'show-day'}" title="Show the full schedule"><span class="class-title">${esc(c.subject)}</span>${icon('chevronRight')}</button>` : `<div class="class-title">${esc(c.subject)}</div>`}<div class="subheadline sub">${esc(detailText(c))}</div><div class="caption faint mono">${dayLabel ? esc(dayLabel) + ' ' : ''}${esc(c.start)} – ${esc(c.end)}</div><div class="countdown">${prefix} ${countdownText(minutes(useEnd ? c.end : c.start) + shift)}</div>${progress ? progressBar((now - minutes(c.start)) / (minutes(c.end) - minutes(c.start))) : ''}` : `<div class="empty-title">${esc(emptyTitle)}</div><div class="subheadline sub">${esc(emptyMessage)}</div>`}</div>`;
+    const nowNext = card('Now / Next', 'clock', `<div class="now-next">${column('Right Now', current, {emptyTitle: 'No class', emptyMessage: 'Campus will watch for the next scheduled class.', prefix: 'Ends in', useEnd: true, progress: true, opens: true})}<span class="vertical-rule"></span>${nextWeek && !next ? column(`Up Next · ${weekdayName(nextWeek.iso)}`, nextWeek.c, {emptyTitle: 'Done', emptyMessage: '', prefix: 'Begins in', useEnd: false, opens: true, shift: nextWeek.shift, dayLabel: weekdayName(nextWeek.iso).slice(0, 3)}) : column('Up Next', next, {emptyTitle: 'Done', emptyMessage: 'No more classes are scheduled today.', prefix: 'Begins in', useEnd: false})}</div>`);
     const dueCard = card('Due Next 24 Hours', 'alert', due.length ? `<div class="rows">${due.map(h => `<div class="due-row"><div class="grow"><div class="row-title">${esc(h.title)}</div><div class="caption faint one-line">${esc([h.subject, shortDateTime(h.due)].filter(Boolean).join(' · '))}</div></div>${badge(h)}</div>`).join('')}</div>` : `<div class="due-empty">${icon('checkCircle')}<span>Nothing due in the next 24 hours.</span></div>`);
     const cafeteria = card('Cafeteria', 'fork', `${menuImage?.image ? `<button type="button" class="menu-thumb" data-action="original-menu" title="Open cached menu image"><img src="${esc(menuImage.image)}" alt="Cached ${esc(state.division)} lunch menu"></button><div class="caption faint">Updated ${shortDateTime(menuImage.fetchedAt)}</div>` : emptyState('No cached menu image', cafeteriaError || 'Refresh Cafeteria once to cache the latest KIS menu image.', 'photo')}<div>${btn('Open Full Size', {action: 'original-menu', disabled: !menuImage?.image})}</div>`, 'cafeteria-card');
     const calendar = card('Calendar', 'calendar', upcoming.length ? `<div class="rows">${upcoming.map(e => `<div class="event-row"><div class="grow"><div class="event-title">${esc(e.title)}</div><div class="caption faint">${esc(eventDateText(e))} · ${esc(eventCategory(e))}</div></div>${e.type === 'break' ? pill('No school') : ''}</div>`).join('')}</div>` : emptyState('No upcoming events', 'Add school calendar items for breaks, exams, and no-school days.', 'calendar'), 'calendar-summary-card');
     return `<div class="page today-page">${header('Today', fullDate())}${nowNext}${dueCard}<div class="two-up">${cafeteria}${calendar}</div></div>`;
   }
-  function daySchedule() {
-    const iso = dateKey(), list = classesOn(iso), currentId = currentClass()?.id, day = rotationAt(iso);
-    return `<div class="day-schedule"><div class="day-schedule-head"><div><h2 class="display-22">Today's Schedule</h2><div class="caption sub">${new Intl.DateTimeFormat('en-US', {timeZone: TZ, weekday: 'long', month: 'long', day: 'numeric'}).format(new Date())}</div></div>${day ? pill(`${day} Day`) : ''}${iconButton('Close', 'xmark', 'close')}</div><div class="hairline"></div>${list.length ? `<div class="day-schedule-list">${list.map(c => { const now = c.id === currentId; return `<div class="day-row ${now ? 'now' : ''}"><div class="day-row-time">${esc(c.start)}<br>${esc(c.end)}</div><span class="day-row-bar"></span><div class="grow"><div class="day-row-subject">${esc(c.subject)}</div>${c.room || c.teacher ? `<div class="caption sub one-line">${esc([c.room, c.teacher].filter(Boolean).join(' · '))}</div>` : ''}</div>${now ? pill('Now') : ''}</div>`; }).join('')}</div>` : emptyState('No classes today', 'There is no schedule for this date.', 'calMinus')}</div>`;
+  const weekdayName = iso => new Intl.DateTimeFormat('en-US', {timeZone: 'UTC', weekday: 'long'}).format(new Date(`${iso}T00:00:00Z`));
+  function daySchedule(iso = dateKey()) {
+    const today = iso === dateKey(), list = classesOn(iso), currentId = today ? currentClass()?.id : null, day = rotationAt(iso);
+    return `<div class="day-schedule"><div class="day-schedule-head"><div><h2 class="display-22">${today ? "Today's" : esc(weekdayName(iso)) + "'s"} Schedule</h2><div class="caption sub">${new Intl.DateTimeFormat('en-US', {timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric'}).format(new Date(`${iso}T00:00:00Z`))}</div></div>${day ? pill(`${day} Day`) : ''}${iconButton('Close', 'xmark', 'close')}</div><div class="hairline"></div>${list.length ? `<div class="day-schedule-list">${list.map(c => { const now = c.id === currentId; return `<div class="day-row ${now ? 'now' : ''}"><div class="day-row-time">${esc(c.start)}<br>${esc(c.end)}</div><span class="day-row-bar"></span><div class="grow"><div class="day-row-subject">${esc(c.subject)}</div>${c.room || c.teacher ? `<div class="caption sub one-line">${esc([c.room, c.teacher].filter(Boolean).join(' · '))}</div>` : ''}</div>${now ? pill('Now') : ''}</div>`; }).join('')}</div>` : emptyState(today ? 'No classes today' : 'No classes', 'There is no schedule for this date.', 'calMinus')}</div>`;
   }
   function originalMenu() {
     const menuImage = state.cafeteria[state.division];
@@ -643,7 +651,7 @@
       let r;
       try { r = await fetch(`https://kisj.kr/our/${state.division.toLowerCase()}crawl.php`, {cache: 'no-store'}); } catch { throw Error('The cafeteria API blocks browser access (CORS).'); }
       if (!r.ok) throw Error(`Cafeteria API returned HTTP ${r.status}.`);
-      const data = await r.json(), urls = data.thisWeek?.length ? data.thisWeek : data.nextWeek || [];
+      const data = await r.json(), preferNext = ['ES', 'MS'].includes(state.division) && dayIndex(dateKey()) >= 5, urls = (preferNext && data.nextWeek?.length ? data.nextWeek : data.thisWeek?.length ? data.thisWeek : data.nextWeek) || []; // ES/MS: next week's menu from Saturday, this week's if it is not published yet
       if (!urls.length) throw Error('No menu image is published for this week or next week.');
       const entry = urls.find(x => /kor|korean|kr|ko/i.test(JSON.stringify(x))) || urls[0], url = typeof entry === 'string' ? entry : Object.values(entry || {}).find(x => typeof x === 'string' && x.startsWith('http'));
       if (!url) throw Error('The cafeteria API returned no usable image URL.');
@@ -876,6 +884,7 @@
       case 'setup-back': state.setupStep = Math.max(0, setupStep() - 1); save(); render(); break;
       case 'setup-finish': state.setupComplete = true; state.setupStep = 3; save(); go('today'); refreshCafeteria(true); break;
       case 'show-day': openSheet(daySchedule, 'day-sheet'); break;
+      case 'show-next-day': { const upcoming = firstClassNextWeek(); if (upcoming) openSheet(() => daySchedule(upcoming.iso), 'day-sheet'); break; }
       case 'original-menu': openSheet(originalMenu, 'menu-sheet'); break;
       case 'sync': openSync(); break;
       case 'read-clipboard': try { const items = await navigator.clipboard.read(); let html = ''; for (const item of items) { if (item.types.includes('text/html')) { html = await (await item.getType('text/html')).text(); break; } if (item.types.includes('text/plain')) html = await (await item.getType('text/plain')).text(); } parsePaste(t.dataset.kind, html); } catch { toast('Clipboard access was blocked. Click the paste box and press ⌘V or Ctrl+V.'); } break;
