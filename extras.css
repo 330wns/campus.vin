@@ -352,3 +352,28 @@ body[data-theme="dark"] .alert-icon { filter: invert(1); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* Calendar search */
+.sheet.search-sheet { width: min(100%, 420px); overflow: hidden; display: flex; flex-direction: column; }
+.calendar-search { display: flex; flex-direction: column; min-height: 0; }
+.search-field { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--campus-hairline); color: var(--campus-faint); }
+.search-field svg { width: 15px; height: 15px; flex: none; }
+.search-field input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--campus-ink); font: inherit; font-size: 14px; }
+.search-clear { display: flex; padding: 0; border: 0; background: none; color: var(--campus-faint); cursor: pointer; }
+.search-hint { padding: 14px; }
+.search-results { max-height: min(420px, calc(100vh - 160px)); overflow: auto; padding: 8px; }
+.search-section { padding: 6px 8px 2px; }
+.search-result { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.search-result:hover, .search-result:focus-visible { background: var(--campus-fill); outline: 0; }
+.search-result-icon { display: flex; width: 18px; justify-content: center; color: var(--campus-sub); }
+.search-result-icon svg { width: 14px; height: 14px; }
+.search-result-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+
+/* Inline-editable manual homework details */
+.detail-input { width: 100%; padding: 2px 4px; margin-left: -4px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--campus-ink); font: inherit; font-size: 13px; }
+.detail-input:hover { border-color: var(--campus-line); }
+.detail-input:focus { border-color: var(--campus-line); background: var(--campus-fill); outline: 0; }
+.detail-input.display-24 { font-family: var(--serif); font-size: 24px; font-weight: 600; }
+.detail-head .detail-input[data-field="subject"] { margin-top: 3px; color: var(--campus-sub); }
+.detail-grid input[type="datetime-local"].detail-input { width: auto; border-color: var(--campus-line); }
+.detail-grid .detail-input[data-field="url"] { border-color: var(--campus-line); }

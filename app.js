@@ -57,6 +57,7 @@
     building: '<path d="M3 21h18M5 21V10m4 11V10m6 11V10m4 11V10M2 10h20L12 3z"/>',
     grad: '<path d="M22 9 12 4 2 9l10 5 10-5z"/><path d="M6 11v5c3 2.5 9 2.5 12 0v-5M22 9v6"/>',
     halfCircle: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
     transfer: '<path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/>',
     drive: '<rect x="2" y="13" width="20" height="8" rx="2"/><path d="M5.5 13 8 4h8l2.5 9M6 17h.01M10 17h.01"/>',
     pencil: '<path d="M12 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2 2 0 0 1 3 3L12 15l-4 1 1-4z"/>',
@@ -112,7 +113,7 @@
   let draft = {week: null, matrix: null, error: ''}, fallbackWeekday = 0, fallbackDay = 'A';
   let cafeteriaError = '', cafeteriaLoading = false, calendarLoading = false, calendarError = '';
   let classroomStatus = '', classroomError = '', syncingClassroom = false;
-  let hwDraft = null, eventDraft = null;
+  let hwDraft = null, eventDraft = null, calendarQuery = '', hwLinkDraft = {};
   let pendingTransfer = null;
   let layers = [];
 
@@ -179,6 +180,8 @@
   const eventCategory = e => e.remote ? typeLabel(e.type) : (e.category || typeLabel(e.type));
   const eventDateText = e => e.end && e.end !== e.start ? `${monthDay(e.start)} - ${monthDay(e.end)}` : monthDay(e.start);
   const sourceLabel = h => /google|classroom/i.test(h.source || '') ? 'Google Classroom' : 'Manual';
+  const isManual = h => sourceLabel(h) === 'Manual';
+  const draftDue = date => { const p = parts(date); return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`; };
   const detailText = c => [c.room, c.teacher].filter(Boolean).join(' · ') || 'No room or teacher set';
   const dueSoon = () => state.homework.filter(h => !h.complete && new Date(h.due).getTime() >= Date.now() && new Date(h.due).getTime() <= Date.now() + 86400000).sort((a, b) => a.due.localeCompare(b.due));
   function countdownText(target) { const s = Math.max(0, Math.floor((target - nowMinutes()) * 60)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60; return h > 0 ? `${h}h ${m}m ${sec}s` : m > 0 ? `${m}m ${sec}s` : `${sec}s`; }
@@ -427,7 +430,15 @@
     return () => {
       const h = state.homework.find(x => x.id === id);
       if (!h) return `<div class="detail-sheet">${emptyState('Homework missing', 'This assignment is no longer available.', 'warn')}<div class="sheet-actions"><span class="spacer"></span>${btn('Done', {action: 'close'})}</div></div>`;
-      return `<div class="detail-sheet"><div class="detail-head"><div class="grow"><h2 class="display-24">${esc(h.title)}</h2><div class="subheadline sub">${esc(h.subject)}</div></div>${badge(h)}</div><div class="detail-grid">${micro('Due')}<span class="subheadline">${shortDateTime(h.due)}</span>${micro('Source')}<span class="subheadline">${sourceLabel(h)}</span>${micro('Status')}<span class="subheadline">${h.complete ? 'Completed' : 'Not completed'}</span></div>${colorPicker(`hw:${h.id}`, h.color, 'Homework color')}<div class="hairline"></div>${micro('Note')}<textarea class="note-editor" data-bind="hw-note" data-id="${esc(h.id)}" data-fk="hw-note" aria-label="Note">${esc(h.note || '')}</textarea><div class="sheet-actions">${h.url ? `<a class="btn prominent" href="${esc(h.url)}" target="_blank" rel="noopener noreferrer">${icon('arrowUpRight')}<span>Open Assignment</span></a>` : '<span class="caption faint">No shortcut attached</span>'}<span class="spacer"></span>${btn('Done', {action: 'close'})}</div></div>`;
+      const manual = isManual(h), field = (name, value, attrs = '', cls = '') => `<input class="detail-input ${cls}" data-bind="hw-field" data-field="${name}" data-id="${esc(h.id)}" data-fk="hw-field-${name}" value="${esc(value)}" ${attrs}>`;
+      const head = manual
+        ? `<div class="grow">${field('title', h.title, 'placeholder="Title" aria-label="Title"', 'display-24')}${field('subject', h.subject || '', 'placeholder="Subject" aria-label="Subject"')}</div>`
+        : `<div class="grow"><h2 class="display-24">${esc(h.title)}</h2><div class="subheadline sub">${esc(h.subject)}</div></div>`;
+      const urlInvalid = manual && hwLinkDraft[h.id] != null && shortcutURL(hwLinkDraft[h.id]) === false;
+      const rows = manual
+        ? `${micro('Due')}${field('due', draftDue(new Date(h.due)), 'type="datetime-local" aria-label="Due"')}${micro('Link')}<div>${field('url', hwLinkDraft[h.id] ?? h.url ?? '', 'placeholder="Shortcut URL (optional)" aria-label="Shortcut URL"')}${urlInvalid ? '<div class="form-error">Enter a valid web address.</div>' : ''}</div>`
+        : `${micro('Due')}<span class="subheadline">${shortDateTime(h.due)}</span>`;
+      return `<div class="detail-sheet"><div class="detail-head">${head}${badge(h)}</div><div class="detail-grid">${rows}${micro('Source')}<span class="subheadline">${sourceLabel(h)}</span>${micro('Status')}<span class="subheadline">${h.complete ? 'Completed' : 'Not completed'}</span></div>${colorPicker(`hw:${h.id}`, h.color, 'Homework color')}<div class="hairline"></div>${micro('Note')}<textarea class="note-editor" data-bind="hw-note" data-id="${esc(h.id)}" data-fk="hw-note" aria-label="Note">${esc(h.note || '')}</textarea><div class="sheet-actions">${h.url ? `<a class="btn prominent" href="${esc(h.url)}" target="_blank" rel="noopener noreferrer">${icon('arrowUpRight')}<span>Open Assignment</span></a>` : '<span class="caption faint">No shortcut attached</span>'}<span class="spacer"></span>${btn('Done', {action: 'close'})}</div></div>`;
     };
   }
   function shortcutURL(value) {
@@ -470,7 +481,7 @@
       return `<div class="week-row">${cells}<div class="band-layer" style="grid-template-rows:repeat(${occupied.length || 1},21px)">${bands}</div></div>`;
     }).join('');
     const monthTitle = new Intl.DateTimeFormat('en-US', {timeZone: 'UTC', month: 'long', year: 'numeric'}).format(first);
-    const actions = `<div class="calendar-actions"><button type="button" class="btn outline icon-capsule" data-action="calendar-refresh" title="Refresh school calendar" aria-label="Refresh school calendar" ${calendarLoading ? 'disabled' : ''}>${calendarLoading ? spinner : icon('refresh')}</button>${iconButton('Previous month', 'chevronLeft', 'month-prev')}${iconButton('Jump to today', 'scope', 'month-today')}${iconButton('Next month', 'chevronRight', 'month-next')}${btn('Add', {action: 'event-new', kind: 'prominent', sym: 'plus'})}<a class="btn outline" href="https://kis.ac/school-calendar/" target="_blank" rel="noopener noreferrer">KIS</a></div>`;
+    const actions = `<div class="calendar-actions"><button type="button" class="btn outline icon-capsule" data-action="calendar-refresh" title="Refresh school calendar" aria-label="Refresh school calendar" ${calendarLoading ? 'disabled' : ''}>${calendarLoading ? spinner : icon('refresh')}</button>${iconButton('Search calendar (⌘F / Ctrl+F)', 'search', 'calendar-search')}${iconButton('Previous month', 'chevronLeft', 'month-prev')}${iconButton('Jump to today', 'scope', 'month-today')}${iconButton('Next month', 'chevronRight', 'month-next')}${btn('Add', {action: 'event-new', kind: 'prominent', sym: 'plus'})}<a class="btn outline" href="https://kis.ac/school-calendar/" target="_blank" rel="noopener noreferrer">KIS</a></div>`;
     return `<div class="page calendar-page">${header(monthTitle, `Today is ${fullDate()}`, actions)}${calendarError ? `<div class="caption sub calendar-error" title="${esc(calendarError)}">${esc(calendarError)}</div>` : ''}<section class="card month-card"><div class="weekday-labels">${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(micro).join('')}</div>${weeks}</section></div>`;
   }
   function bandText(s) { const v = s.slice(1), lum = (.2126 * parseInt(v.slice(0, 2), 16) + .7152 * parseInt(v.slice(2, 4), 16) + .0722 * parseInt(v.slice(4, 6), 16)) / 255; return lum > .55 ? '#000' : '#fff'; }
@@ -478,6 +489,36 @@
     if (hex(h.color)) return h.color;
     const ms = new Date(h.due).getTime() - Date.now();
     return ms <= 0 ? '#ad1414' : ms <= 3600000 ? '#b80f0d' : ms <= 86400000 ? '#b84a05' : ms <= 172800000 ? '#8c6b05' : 'var(--campus-sub)';
+  }
+  function calendarSearchResults() {
+    const terms = calendarQuery.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!terms.length) return null;
+    const matches = (...fields) => { const text = fields.join(' ').toLowerCase(); return terms.every(t => text.includes(t)); };
+    const today = dateKey(), results = [];
+    for (const e of allEvents()) if (matches(e.title, eventCategory(e), e.note || '')) results.push({kind: 'event', id: e.id, title: e.title, detail: `${eventDateText(e)} · ${eventCategory(e)}`, start: e.start, end: e.end || e.start, color: e.color, symbol: e.type === 'break' ? 'calMinus' : 'calendar'});
+    for (const h of state.homework) if (matches(h.title, h.subject || '', h.note || '')) { const day = dateKey(new Date(h.due)); results.push({kind: 'homework', id: h.id, title: `${h.title} due`, detail: [shortDateTime(h.due), h.subject].filter(Boolean).join(' · '), start: day, end: day, sortKey: h.due, color: h.color, symbol: h.complete ? 'checkCircle' : 'pencil'}); }
+    const key = r => r.sortKey || r.start;
+    return {
+      upcoming: results.filter(r => r.end >= today).sort((a, b) => key(a).localeCompare(key(b))).slice(0, 60),
+      past: results.filter(r => r.end < today).sort((a, b) => key(b).localeCompare(key(a))).slice(0, 60),
+    };
+  }
+  function calendarSearch() {
+    const found = calendarSearchResults();
+    const row = r => `<button type="button" class="search-result" data-action="search-open" data-kind="${r.kind}" data-id="${esc(r.id)}" data-date="${esc(r.start)}"><span class="search-result-icon" style="${hex(r.color) ? `color:${r.color}` : ''}">${icon(r.symbol)}</span><span class="search-result-text"><span class="subheadline one-line">${esc(r.title)}</span><span class="caption sub one-line">${esc(r.detail)}</span></span></button>`;
+    const section = (title, items) => items.length ? `<div class="search-section">${micro(title)}</div>${items.map(row).join('')}` : '';
+    const body = !found ? '<div class="caption faint search-hint">Type to search school events and homework.</div>'
+      : !found.upcoming.length && !found.past.length ? `<div class="caption faint search-hint">No results for “${esc(calendarQuery)}”</div>`
+      : `<div class="sheet-scroll search-results">${section('Upcoming', found.upcoming)}${section('Past', found.past)}</div>`;
+    return `<div class="calendar-search"><div class="search-field">${icon('search')}<input data-bind="calendar-search" data-fk="calendar-search" placeholder="Search events and homework" value="${esc(calendarQuery)}" autocomplete="off" spellcheck="false">${calendarQuery ? `<button type="button" class="search-clear" data-action="search-clear" aria-label="Clear search">${icon('xFill')}</button>` : ''}</div>${body}</div>`;
+  }
+  function openCalendarSearch() { openSheet(calendarSearch, 'search-sheet'); $('#modal-root [data-fk="calendar-search"]')?.select(); }
+  function openSearchResult(kind, id, date) {
+    closeLayer();
+    monthView = date.slice(0, 7);
+    render();
+    if (kind === 'event') openEventEditor(id);
+    else { delete hwLinkDraft[id]; openSheet(assignmentDetail(id), 'detail'); }
   }
   function eventEditor() {
     const d = eventDraft, remote = d.remote, canSave = d.title.trim().length > 0;
@@ -829,6 +870,16 @@
       case 'custom-title': customTitle = t.value; markDirty(); break;
       case 'template-name': templateName = t.value; break;
       case 'hw-note': { const h = state.homework.find(x => x.id === t.dataset.id); if (h) { h.note = t.value; save(); } break; }
+      case 'calendar-search': calendarQuery = t.value; drawLayers(); restoreFocus({key: t.dataset.fk, start: t.selectionStart, end: t.selectionEnd}); break;
+      case 'hw-field': {
+        const h = state.homework.find(x => x.id === t.dataset.id); if (!h || !isManual(h)) break;
+        const f = t.dataset.field, v = t.value;
+        if (f === 'title') { if (v.trim()) h.title = v.trim(); }
+        else if (f === 'subject') h.subject = v.trim();
+        else if (f === 'due') { const d = new Date(`${v}:00+09:00`); if (!v || isNaN(d)) break; h.due = d.toISOString(); }
+        else if (f === 'url') { const url = shortcutURL(v), wasInvalid = shortcutURL(hwLinkDraft[h.id] ?? '') === false; hwLinkDraft[h.id] = v; if (url !== false) h.url = url || ''; if (wasInvalid !== (url === false)) { drawLayers(); restoreFocus({key: t.dataset.fk, start: t.selectionStart, end: t.selectionEnd}); } }
+        save(); break;
+      }
       case 'hw-draft': hwDraft[t.dataset.field] = t.value; drawLayers(); restoreFocus({key: t.dataset.fk, start: t.selectionStart, end: t.selectionEnd}); break;
       case 'event': { const wasSavable = Boolean(eventDraft.title.trim()); eventDraft[t.dataset.field] = t.value; if (t.dataset.field === 'category' || wasSavable !== Boolean(eventDraft.title.trim())) { drawLayers(); restoreFocus({key: t.dataset.fk, start: t.selectionStart, end: t.selectionEnd}); } break; }
     }
@@ -933,7 +984,7 @@
         state.homework.push({id: uid(), title: d.title.trim(), subject: d.subject.trim(), due: new Date(`${d.due}:00+09:00`).toISOString(), url: url || '', note: d.note.trim(), color: '', complete: false, source: 'manual'});
         save(); closeLayer(); render(); break;
       }
-      case 'hw-detail': openSheet(assignmentDetail(id), 'detail'); break;
+      case 'hw-detail': delete hwLinkDraft[id]; openSheet(assignmentDetail(id), 'detail'); break;
       case 'hw-toggle': { const h = state.homework.find(x => x.id === id); if (!h) break; lastCompletedId = h.complete ? null : h.id; h.complete = !h.complete; save(); render(); break; }
       case 'hw-undo': { const h = state.homework.find(x => x.id === lastCompletedId); if (h) h.complete = false; lastCompletedId = null; save(); render(); break; }
       case 'hw-trash': { const index = state.homework.findIndex(h => h.id === id); if (index >= 0) { const item = state.homework.splice(index, 1)[0]; putTrash('homework', item, item.title); selection.delete(id); render(); } break; }
@@ -951,6 +1002,9 @@
       case 'month-prev': case 'month-next': { const [year, month] = monthView.split('-').map(Number); monthView = new Date(Date.UTC(year, month - 1 + (a === 'month-next' ? 1 : -1), 1)).toISOString().slice(0, 7); render(); break; }
       case 'month-today': monthView = dateKey().slice(0, 7); render(); break;
       case 'calendar-refresh': refreshCalendar(); break;
+      case 'calendar-search': openCalendarSearch(); break;
+      case 'search-clear': calendarQuery = ''; drawLayers(); restoreFocus({key: 'calendar-search'}); break;
+      case 'search-open': openSearchResult(t.dataset.kind, id, t.dataset.date); break;
       case 'event-new': openEventEditor(); break;
       case 'event-edit': openEventEditor(id); break;
       case 'event-category': eventDraft.category = value; drawLayers(); break;
@@ -966,7 +1020,10 @@
       case 'export-data': { const blob = new Blob([JSON.stringify(state, null, 2)], {type: 'application/json'}), url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = `campus-backup-${dateKey()}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 5000); break; }
     }
   });
-  document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches?.('[data-code-input]')) { e.preventDefault(); submitCode(); return; } if (e.key === 'Escape' && layers.length && !layers.at(-1).alert) { closeLayer(); render(); } });
+  document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f' && state.setupComplete && page === 'calendar' && !layers.length) { e.preventDefault(); openCalendarSearch(); return; }
+    if (e.key === 'Enter' && e.target.matches?.('[data-fk="calendar-search"]')) { e.preventDefault(); $('#modal-root .search-result')?.click(); return; }
+    if (e.key === 'Enter' && e.target.matches?.('[data-code-input]')) { e.preventDefault(); submitCode(); return; } if (e.key === 'Escape' && layers.length && !layers.at(-1).alert) { closeLayer(); render(); } });
   window.addEventListener('hashchange', () => { const next = location.hash.slice(1); if (pages.some(p => p[0] === next) && next !== page) { page = next; render(); } });
   window.addEventListener('resize', () => { if (page === 'calendar') render(); });
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (state.appearance === 'system') theme(); });
