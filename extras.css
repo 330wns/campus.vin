@@ -377,3 +377,25 @@ body[data-theme="dark"] .alert-icon { filter: invert(1); }
 .detail-head .detail-input[data-field="subject"] { margin-top: 3px; color: var(--campus-sub); }
 .detail-grid input[type="datetime-local"].detail-input { width: auto; border-color: var(--campus-line); }
 .detail-grid .detail-input[data-field="url"] { border-color: var(--campus-line); }
+
+/* Repeating homework */
+.repeat-editor { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; font-size: 13px; }
+.repeat-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.repeat-editor select.text-field, .repeat-editor input[type="date"].text-field { width: auto; }
+.repeat-every { display: inline-flex; align-items: center; gap: 6px; color: var(--campus-sub); }
+.repeat-every input { width: 54px; text-align: center; }
+.repeat-check { display: inline-flex; align-items: center; gap: 6px; color: var(--campus-ink); }
+.repeat-weekdays { display: flex; gap: 4px; }
+.repeat-weekdays button { width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: var(--campus-fill-strong); color: var(--campus-sub); font: 600 11px/1 inherit; cursor: pointer; }
+.repeat-weekdays button.on { background: var(--campus-ink); color: var(--campus-on-ink); }
+.repeat-editor .segmented { width: auto; }
+.repeat-field { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 10px 0; border-top: 1px solid var(--campus-hairline); font-size: 13px; }
+.repeat-field > span { flex: none; padding-top: 6px; }
+.grouped-form .repeat-field input, .grouped-form .repeat-field select { text-align: left; max-width: none; flex: none; }
+.grouped-form .repeat-field input[type="checkbox"] { width: auto; }
+.grouped-form .repeat-field .repeat-every input { width: 54px; text-align: center; border-color: var(--campus-line); background: var(--campus-surface); }
+.repeat-tag { display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; color: var(--campus-sub); }
+.repeat-tag svg { width: 11px; height: 11px; }
+.detail-grid .repeat-editor { padding: 2px 0; }
+.grouped-form .repeat-field label { min-height: 0; padding: 0; border: 0; justify-content: flex-start; gap: 6px; }
+.grouped-form .repeat-field .repeat-every { gap: 6px; }

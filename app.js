@@ -58,6 +58,7 @@
     grad: '<path d="M22 9 12 4 2 9l10 5 10-5z"/><path d="M6 11v5c3 2.5 9 2.5 12 0v-5M22 9v6"/>',
     halfCircle: '<circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
+    repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
     transfer: '<path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/>',
     drive: '<rect x="2" y="13" width="20" height="8" rx="2"/><path d="M5.5 13 8 4h8l2.5 9M6 17h.01M10 17h.01"/>',
     pencil: '<path d="M12 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2 2 0 0 1 3 3L12 15l-4 1 1-4z"/>',
@@ -182,6 +183,67 @@
   const sourceLabel = h => /google|classroom/i.test(h.source || '') ? 'Google Classroom' : 'Manual';
   const isManual = h => sourceLabel(h) === 'Manual';
   const draftDue = date => { const p = parts(date); return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`; };
+
+  // Repeating manual homework (same rules as the Mac app). The due date alone sets the weekday or day of the month.
+  // rule: {freq: daily|weekly|monthly|aDay|bDay, interval, skipWeekends, skipBreaks, end: 'YYYY-MM-DD', onComplete: move|new}
+  const REPEATS = [['daily', 'Daily', 'day'], ['weekly', 'Weekly', 'week'], ['monthly', 'Monthly', 'month'], ['aDay', 'Every A Day', ''], ['bDay', 'Every B Day', '']];
+  const repeatUnit = rule => REPEATS.find(r => r[0] === rule.freq)?.[2] || '';
+  const isRotationRepeat = rule => rule.freq === 'aDay' || rule.freq === 'bDay';
+  function repeatSummary(rule) {
+    if (isRotationRepeat(rule)) return rule.freq === 'aDay' ? 'Every A Day' : 'Every B Day';
+    const n = Number(rule.interval) || 1, base = n > 1 ? `Every ${n} ${repeatUnit(rule)}s` : REPEATS.find(r => r[0] === rule.freq)?.[1] || '';
+    return base + (rule.freq === 'daily' && rule.skipWeekends ? ' on weekdays' : '') + (rule.skipBreaks !== false ? ', not on breaks' : '');
+  }
+  /** The next due date (ISO) after `due`, or null once the series has ended. Keeps the time of day. */
+  function nextDueAfter(rule, due) {
+    const p = parts(new Date(due)), time = `${p.hour}:${p.minute}`, monthDay = Number(p.day), step = Math.max(1, Number(rule.interval) || 1);
+    const candidate = from => {
+      if (rule.freq === 'daily') { let day = from; for (let i = 0; i < 14; i++) { day = plusDays(day, step); if (!rule.skipWeekends || dayIndex(day) < 5) return day; } return null; }
+      if (rule.freq === 'weekly') return plusDays(from, 7 * step);
+      if (rule.freq === 'monthly') { const [y, m] = from.split('-').map(Number), first = new Date(Date.UTC(y, m - 1 + step, 1)), last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate(); return `${first.getUTCFullYear()}-${p2(first.getUTCMonth() + 1)}-${p2(Math.min(monthDay, last))}`; }
+      if (isRotationRepeat(rule)) { const want = rule.freq === 'aDay' ? 'A' : 'B'; let day = from; for (let i = 0; i < 120; i++) { day = plusDays(day, 1); if (!isBreakDay(day) && rotationAt(day) === want) return day; } }
+      return null;
+    };
+    // A long vacation can swallow many occurrences in a row.
+    for (let i = 0, cursor = `${p.year}-${p.month}-${p.day}`; i < 400; i++) {
+      const next = candidate(cursor); if (!next) return null;
+      if (rule.end && next > rule.end) return null;
+      if (rule.skipBreaks !== false && !isRotationRepeat(rule) && isBreakDay(next)) { cursor = next; continue; }
+      return new Date(`${next}T${time}:00+09:00`).toISOString();
+    }
+    return null;
+  }
+  /** Skips occurrences that already passed, so finishing late doesn't leave overdue copies. */
+  function nextOccurrenceDue(h, now = Date.now()) {
+    let due = h.due;
+    for (let i = 0; i < 2000; i++) { due = nextDueAfter(h.recurrence, due); if (!due) return null; if (new Date(due).getTime() > now) return due; }
+    return null;
+  }
+  /** The rule and due date being edited: the Add sheet's draft or a saved manual homework. */
+  function repeatTarget(target) {
+    if (target === 'draft') return {rule: hwDraft.recurrence, setRule: r => { hwDraft.recurrence = r; }, dueLocal: hwDraft.due, setDueLocal: v => { hwDraft.due = v; }};
+    const h = state.homework.find(x => x.id === target);
+    return h && isManual(h) ? {rule: h.recurrence, setRule: r => { if (r) h.recurrence = r; else delete h.recurrence; save(); }, dueLocal: draftDue(new Date(h.due)), setDueLocal: v => { const d = new Date(`${v}:00+09:00`); if (!isNaN(d)) { h.due = d.toISOString(); save(); } }} : null;
+  }
+  function repeatEditor(target) {
+    const t = repeatTarget(target); if (!t) return '';
+    const rule = t.rule, attrs = `data-target="${esc(target)}"`;
+    const select = `<select class="text-field" data-bind="hw-repeat" ${attrs} aria-label="Repeat"><option value="">Never</option>${REPEATS.map(([v, label]) => `<option value="${v}" ${rule?.freq === v ? 'selected' : ''}>${label}</option>`).join('')}</select>`;
+    if (!rule) return `<div class="repeat-editor">${select}</div>`;
+    const n = Number(rule.interval) || 1, dueDay = t.dueLocal.slice(0, 10), unit = repeatUnit(rule);
+    const every = unit ? `<label class="repeat-every">Every <input type="number" min="1" max="30" class="text-field" data-bind="hw-repeat-interval" ${attrs} value="${n}" aria-label="Interval"> ${unit}${n === 1 ? '' : 's'}</label>` : '';
+    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    let detail = '';
+    if (rule.freq === 'weekly') detail = `<div class="repeat-weekdays">${weekdays.map((w, i) => `<button type="button" class="${dayIndex(dueDay) === i ? 'on' : ''}" data-action="hw-repeat-weekday" data-value="${i}" ${attrs} title="Due every ${w}" aria-pressed="${dayIndex(dueDay) === i}">${w.charAt(0)}</button>`).join('')}</div>`;
+    else if (rule.freq === 'monthly') detail = `<select class="text-field" data-bind="hw-repeat-monthday" ${attrs} aria-label="Day of the month">${Array.from({length: 31}, (_, i) => `<option value="${i + 1}" ${Number(dueDay.slice(8)) === i + 1 ? 'selected' : ''}>Day ${i + 1}</option>`).join('')}</select>`;
+    else if (rule.freq === 'daily') detail = `<label class="repeat-check"><input type="checkbox" data-bind="hw-repeat-flag" data-flag="skipWeekends" ${attrs} ${rule.skipWeekends ? 'checked' : ''}> Skip weekends</label>`;
+    else detail = '<div class="caption sub">Follows the A/B rotation and skips no-school days.</div>';
+    const breaks = isRotationRepeat(rule) ? '' : `<label class="repeat-check" title="No homework on days the school calendar marks as no school."><input type="checkbox" data-bind="hw-repeat-flag" data-flag="skipBreaks" ${attrs} ${rule.skipBreaks !== false ? 'checked' : ''}> Skip breaks and holidays</label>`;
+    const end = `<div class="repeat-row"><label class="repeat-check"><input type="checkbox" data-bind="hw-repeat-end-on" ${attrs} ${rule.end ? 'checked' : ''}> End repeat</label>${rule.end ? `<input type="date" class="text-field" data-bind="hw-repeat-end" ${attrs} min="${esc(dueDay)}" value="${esc(rule.end)}" aria-label="End date">` : ''}</div>`;
+    const action = rule.onComplete === 'new' ? 'new' : 'move';
+    const onComplete = `<div class="repeat-row"><span class="sub">When checked off</span>${segmented([['move', 'Move the due date'], ['new', 'Add a new one']], action, 'hw-repeat-complete', attrs)}</div><div class="caption faint">${action === 'move' ? 'Stays as one homework; its due date moves to the next time.' : 'Keeps this one in Completed and adds the next time as new homework.'}</div>`;
+    return `<div class="repeat-editor"><div class="repeat-row">${select}${every}</div>${detail}${breaks}${end}${onComplete}</div>`;
+  }
   const detailText = c => [c.room, c.teacher].filter(Boolean).join(' · ') || 'No room or teacher set';
   const dueSoon = () => state.homework.filter(h => !h.complete && new Date(h.due).getTime() >= Date.now() && new Date(h.due).getTime() <= Date.now() + 86400000).sort((a, b) => a.due.localeCompare(b.due));
   function countdownText(target) { const s = Math.max(0, Math.floor((target - nowMinutes()) * 60)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60; return h > 0 ? `${h}h ${m}m ${sec}s` : m > 0 ? `${m}m ${sec}s` : `${sec}s`; }
@@ -424,7 +486,7 @@
       ? `<button type="button" class="select-circle ${selected ? 'on' : ''}" data-action="hw-select" data-id="${esc(h.id)}" aria-label="${selected ? 'Deselect' : 'Select'} homework">${selected ? icon('checkmark') : ''}</button>`
       : `<button type="button" class="row-trash" data-action="hw-trash" data-id="${esc(h.id)}" title="Delete homework" aria-label="Delete ${esc(h.title)}">${icon('trash')}</button><button type="button" class="complete-circle ${h.complete ? 'on' : ''}" data-action="hw-toggle" data-id="${esc(h.id)}" aria-label="${h.complete ? 'Mark as not completed' : 'Mark as completed'}">${h.complete ? icon('checkmark') : ''}</button>`;
     const trailing = selecting ? '' : `<button type="button" class="note-button" data-action="hw-detail" data-id="${esc(h.id)}" title="Edit note" aria-label="Edit note">${icon(h.note ? 'note' : 'notePlus')}</button>${h.url ? `<a class="btn outline" href="${esc(h.url)}" target="_blank" rel="noopener noreferrer" title="Open assignment">${icon('arrowUpRight')}<span>Open</span></a>` : ''}`;
-    return `<div class="assignment-row ${color ? 'tinted' : ''} ${h.complete ? 'complete' : ''}" ${color ? `style="--tint:${color}"` : ''}><span class="assignment-accent"></span>${lead}<div class="assignment-text"><div class="assignment-title">${esc(h.title)}</div><div class="caption faint one-line">${esc([h.subject, shortDateTime(h.due), sourceLabel(h)].filter(Boolean).join(' · '))}</div>${h.note ? `<div class="caption2 sub one-line">${esc(h.note)}</div>` : ''}</div>${badge(h)}${trailing}</div>`;
+    return `<div class="assignment-row ${color ? 'tinted' : ''} ${h.complete ? 'complete' : ''}" ${color ? `style="--tint:${color}"` : ''}><span class="assignment-accent"></span>${lead}<div class="assignment-text"><div class="assignment-title">${esc(h.title)}</div><div class="caption faint one-line">${esc([h.subject, shortDateTime(h.due), sourceLabel(h)].filter(Boolean).join(' · '))}${h.recurrence ? `<span class="repeat-tag">${icon('repeat')}${esc(repeatSummary(h.recurrence))}</span>` : ''}</div>${h.note ? `<div class="caption2 sub one-line">${esc(h.note)}</div>` : ''}</div>${badge(h)}${trailing}</div>`;
   }
   function assignmentDetail(id) {
     return () => {
@@ -436,7 +498,7 @@
         : `<div class="grow"><h2 class="display-24">${esc(h.title)}</h2><div class="subheadline sub">${esc(h.subject)}</div></div>`;
       const urlInvalid = manual && hwLinkDraft[h.id] != null && shortcutURL(hwLinkDraft[h.id]) === false;
       const rows = manual
-        ? `${micro('Due')}${field('due', draftDue(new Date(h.due)), 'type="datetime-local" aria-label="Due"')}${micro('Link')}<div>${field('url', hwLinkDraft[h.id] ?? h.url ?? '', 'placeholder="Shortcut URL (optional)" aria-label="Shortcut URL"')}${urlInvalid ? '<div class="form-error">Enter a valid web address.</div>' : ''}</div>`
+        ? `${micro('Due')}${field('due', draftDue(new Date(h.due)), 'type="datetime-local" aria-label="Due"')}${micro('Link')}<div>${field('url', hwLinkDraft[h.id] ?? h.url ?? '', 'placeholder="Shortcut URL (optional)" aria-label="Shortcut URL"')}${urlInvalid ? '<div class="form-error">Enter a valid web address.</div>' : ''}</div>${micro('Repeat')}${repeatEditor(h.id)}`
         : `${micro('Due')}<span class="subheadline">${shortDateTime(h.due)}</span>`;
       return `<div class="detail-sheet"><div class="detail-head">${head}${badge(h)}</div><div class="detail-grid">${rows}${micro('Source')}<span class="subheadline">${sourceLabel(h)}</span>${micro('Status')}<span class="subheadline">${h.complete ? 'Completed' : 'Not completed'}</span></div>${colorPicker(`hw:${h.id}`, h.color, 'Homework color')}<div class="hairline"></div>${micro('Note')}<textarea class="note-editor" data-bind="hw-note" data-id="${esc(h.id)}" data-fk="hw-note" aria-label="Note">${esc(h.note || '')}</textarea><div class="sheet-actions">${h.url ? `<a class="btn prominent" href="${esc(h.url)}" target="_blank" rel="noopener noreferrer">${icon('arrowUpRight')}<span>Open Assignment</span></a>` : '<span class="caption faint">No shortcut attached</span>'}<span class="spacer"></span>${btn('Done', {action: 'close'})}</div></div>`;
     };
@@ -448,7 +510,7 @@
   }
   function manualEditor() {
     const d = hwDraft, url = shortcutURL(d.shortcut), invalid = url === false;
-    return `<div class="manual-editor"><div><h2 class="display-24">Add Homework</h2><div class="subheadline sub">Create an assignment that is stored only in Campus.</div></div><div class="grouped-form"><label><span>Title</span><input data-bind="hw-draft" data-field="title" data-fk="hw-title" value="${esc(d.title)}"></label><label><span>Subject</span><input data-bind="hw-draft" data-field="subject" data-fk="hw-subject" value="${esc(d.subject)}"></label><label><span>Due</span><input type="datetime-local" data-bind="hw-draft" data-field="due" data-fk="hw-due" value="${esc(d.due)}"></label><label><span>Shortcut URL (optional)</span><input data-bind="hw-draft" data-field="shortcut" data-fk="hw-shortcut" value="${esc(d.shortcut)}"></label>${invalid ? '<div class="form-error">Enter a valid web address.</div>' : ''}<label class="tall"><span>Note (optional)</span><textarea data-bind="hw-draft" data-field="note" data-fk="hw-note-new" rows="3">${esc(d.note)}</textarea></label></div><div class="sheet-actions">${btn('Cancel', {action: 'close'})}<span class="spacer"></span>${btn('Add Homework', {action: 'hw-add', kind: 'prominent', sym: 'plus', disabled: !d.title.trim() || invalid || !d.due})}</div></div>`;
+    return `<div class="manual-editor"><div><h2 class="display-24">Add Homework</h2><div class="subheadline sub">Create an assignment that is stored only in Campus.</div></div><div class="grouped-form"><label><span>Title</span><input data-bind="hw-draft" data-field="title" data-fk="hw-title" value="${esc(d.title)}"></label><label><span>Subject</span><input data-bind="hw-draft" data-field="subject" data-fk="hw-subject" value="${esc(d.subject)}"></label><label><span>Due</span><input type="datetime-local" data-bind="hw-draft" data-field="due" data-fk="hw-due" value="${esc(d.due)}"></label><label><span>Shortcut URL (optional)</span><input data-bind="hw-draft" data-field="shortcut" data-fk="hw-shortcut" value="${esc(d.shortcut)}"></label>${invalid ? '<div class="form-error">Enter a valid web address.</div>' : ''}<label class="tall"><span>Note (optional)</span><textarea data-bind="hw-draft" data-field="note" data-fk="hw-note-new" rows="3">${esc(d.note)}</textarea></label><div class="repeat-field"><span>Repeat</span>${repeatEditor('draft')}</div></div><div class="sheet-actions">${btn('Cancel', {action: 'close'})}<span class="spacer"></span>${btn('Add Homework', {action: 'hw-add', kind: 'prominent', sym: 'plus', disabled: !d.title.trim() || invalid || !d.due})}</div></div>`;
   }
   function bulkColorSheet() {
     return `<div class="bulk-color"><h2 class="display-20">Homework Color</h2>${colorPicker('bulk', bulkColor, 'Selected homework')}<div class="sheet-actions"><span class="caption faint">Default clears the custom color.</span><span class="spacer"></span>${btn('Cancel', {action: 'close'})}${btn('Apply', {action: 'bulk-color-apply', kind: 'prominent'})}</div></div>`;
@@ -903,6 +965,22 @@
     }
     switch (bind) {
       case 'club-enabled': state.club.enabled = t.checked; save(); render(); break;
+      case 'hw-repeat': case 'hw-repeat-interval': case 'hw-repeat-flag': case 'hw-repeat-end-on': case 'hw-repeat-end': case 'hw-repeat-monthday': {
+        const r = repeatTarget(t.dataset.target); if (!r) break;
+        if (bind === 'hw-repeat') r.setRule(t.value ? {skipBreaks: true, onComplete: 'move', ...(r.rule || {}), freq: t.value, interval: r.rule?.interval || 1} : null);
+        else if (!r.rule) break;
+        else if (bind === 'hw-repeat-interval') r.setRule({...r.rule, interval: Math.min(30, Math.max(1, Math.round(Number(t.value)) || 1))});
+        else if (bind === 'hw-repeat-flag') r.setRule({...r.rule, [t.dataset.flag]: t.checked});
+        else if (bind === 'hw-repeat-end-on') r.setRule({...r.rule, end: t.checked ? plusDays(r.dueLocal.slice(0, 10), 30) : ''});
+        else if (bind === 'hw-repeat-end') { const v = validDate(t.value); if (v) r.setRule({...r.rule, end: v}); }
+        else if (bind === 'hw-repeat-monthday') {
+          // That day this month, or next month once it has passed; short months use their last day.
+          const today = dateKey(), day = Number(t.value);
+          for (let k = 0; k < 2; k++) { const [y, m] = today.split('-').map(Number), first = new Date(Date.UTC(y, m - 1 + k, 1)), last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate(), iso = `${first.getUTCFullYear()}-${p2(first.getUTCMonth() + 1)}-${p2(Math.min(day, last))}`; if (iso >= today) { r.setDueLocal(iso + r.dueLocal.slice(10)); break; } }
+        }
+        drawLayers(); if (t.dataset.target !== 'draft') render(); break;
+      }
+      case 'hw-field': if (t.dataset.field === 'due') drawLayers(); break;
       case 'club-day': { const day = Number(t.value); state.club.days = t.checked ? [...new Set([...state.club.days, day])].sort() : state.club.days.filter(d => d !== day); save(); render(); break; }
       case 'event-date': { const v = validDate(t.value); if (!v) break; eventDraft[t.dataset.field] = v; if (eventDraft.end && eventDraft.end < eventDraft.start) eventDraft.end = eventDraft.start; drawLayers(); break; }
       case 'event-range': eventDraft.end = t.checked ? eventDraft.start : ''; drawLayers(); break;
@@ -977,15 +1055,34 @@
       case 'custom-save': saveCustomDraft(); render(); break;
       case 'custom-delete': delete state.customDays[overrideDate]; save(); loadCustomDraft(); render(); break;
       case 'hw-status': showingCompleted = value === 'done'; selecting = false; selection.clear(); render(); break;
-      case 'hw-new': { const due = new Date(Date.now() + 86400000), p = parts(due); hwDraft = {title: '', subject: '', due: `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`, shortcut: '', note: ''}; openSheet(manualEditor, 'manual-sheet'); break; }
+      case 'hw-new': { const due = new Date(Date.now() + 86400000), p = parts(due); hwDraft = {title: '', subject: '', due: `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`, shortcut: '', note: '', recurrence: null}; openSheet(manualEditor, 'manual-sheet'); break; }
       case 'hw-add': {
         const d = hwDraft, url = shortcutURL(d.shortcut);
         if (!d.title.trim() || url === false || !d.due) break;
-        state.homework.push({id: uid(), title: d.title.trim(), subject: d.subject.trim(), due: new Date(`${d.due}:00+09:00`).toISOString(), url: url || '', note: d.note.trim(), color: '', complete: false, source: 'manual'});
+        state.homework.push({id: uid(), title: d.title.trim(), subject: d.subject.trim(), due: new Date(`${d.due}:00+09:00`).toISOString(), url: url || '', note: d.note.trim(), color: '', complete: false, source: 'manual', ...(d.recurrence ? {recurrence: d.recurrence} : {})});
         save(); closeLayer(); render(); break;
       }
       case 'hw-detail': delete hwLinkDraft[id]; openSheet(assignmentDetail(id), 'detail'); break;
-      case 'hw-toggle': { const h = state.homework.find(x => x.id === id); if (!h) break; lastCompletedId = h.complete ? null : h.id; h.complete = !h.complete; save(); render(); break; }
+      case 'hw-toggle': {
+        const h = state.homework.find(x => x.id === id); if (!h) break;
+        const next = !h.complete && isManual(h) && h.recurrence && !h.spawnedNext ? nextOccurrenceDue(h) : null;
+        if (next && h.recurrence.onComplete !== 'new') {
+          // One homework: the due date moves to the next time and it stays in To do.
+          h.due = next; lastCompletedId = null; save(); render(); toast(`Next due ${shortDateTime(next)}`); break;
+        }
+        lastCompletedId = h.complete ? null : h.id; h.complete = !h.complete;
+        if (next) { h.spawnedNext = true; state.homework.push({...h, id: uid(), due: next, complete: false, spawnedNext: false}); }
+        save(); render(); break;
+      }
+      case 'hw-repeat-weekday': {
+        const r = repeatTarget(t.dataset.target); if (!r) break;
+        // The nearest such day from today; today itself only if its due time is still ahead.
+        const today = dateKey(), time = r.dueLocal.slice(10);
+        let day = plusDays(today, (Number(value) - dayIndex(today) + 7) % 7);
+        if (new Date(`${day}${time}:00+09:00`).getTime() <= Date.now()) day = plusDays(day, 7);
+        r.setDueLocal(day + time); drawLayers(); render(); break;
+      }
+      case 'hw-repeat-complete': { const r = repeatTarget(t.closest('[data-target]')?.dataset.target); if (r?.rule) { r.setRule({...r.rule, onComplete: value}); drawLayers(); render(); } break; }
       case 'hw-undo': { const h = state.homework.find(x => x.id === lastCompletedId); if (h) h.complete = false; lastCompletedId = null; save(); render(); break; }
       case 'hw-trash': { const index = state.homework.findIndex(h => h.id === id); if (index >= 0) { const item = state.homework.splice(index, 1)[0]; putTrash('homework', item, item.title); selection.delete(id); render(); } break; }
       case 'select-start': selecting = true; selection.clear(); render(); break;
