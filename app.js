@@ -62,6 +62,7 @@
     transfer: '<path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/>',
     drive: '<rect x="2" y="13" width="20" height="8" rx="2"/><path d="M5.5 13 8 4h8l2.5 9M6 17h.01M10 17h.01"/>',
     pencil: '<path d="M12 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2 2 0 0 1 3 3L12 15l-4 1 1-4z"/>',
+    camera: '<path d="M3 8a2 2 0 0 1 2-2h2.5l1.5-2h6l1.5 2H19a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/>',
     stack: '<rect x="3" y="8" width="13" height="13" rx="2"/><path d="M8 4h11a2 2 0 0 1 2 2v11"/>',
     download: '<path d="M12 3v12m-5-5 5 5 5-5M5 21h14"/>',
     upload: '<path d="M12 15V3M7 8l5-5 5 5M5 21h14"/>',
@@ -652,7 +653,7 @@
   function redrawTransfer() { const focus = captureFocus(); drawLayers(); restoreFocus(focus); }
   function receiveSheet() {
     const {value, busy, error} = receiveState;
-    return `<div class="transfer-sheet"><div class="transfer-sheet-head"><h2 class="display-22">Import from Campus for Mac</h2>${iconButton('Close', 'xmark', 'close')}</div><p class="subheadline sub">Campus for Mac is opening to show an 8-character code that works once for 5 minutes. Type it here. You'll be asked before anything is replaced.</p><input class="code-input" data-code-input data-fk="transfer-code" value="${esc(value)}" maxlength="9" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" aria-label="8-character code" ${busy ? 'disabled' : ''}>${error ? notice(error, 'warn') : ''}<div class="sheet-actions"><button type="button" class="plain-link" data-action="open-app-send">Campus for Mac didn't open? Try again</button><span class="spacer"></span>${btn(busy ? 'Importing…' : 'Import', {action: 'receive-code', kind: 'prominent', disabled: busy || !value.trim()})}</div></div>`;
+    return `<div class="transfer-sheet"><div class="transfer-sheet-head"><h2 class="display-22">Import from Campus for Mac</h2>${iconButton('Close', 'xmark', 'close')}</div><p class="subheadline sub">Campus for Mac is opening to show an 8-character code that works once for 5 minutes. Type it here. You'll be asked before anything is replaced.</p><input class="code-input" data-code-input data-fk="transfer-code" value="${esc(value)}" maxlength="9" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" aria-label="8-character code" ${busy ? 'disabled' : ''}>${error ? notice(error, 'warn') : ''}${canScan() ? btn('Scan QR Code', {action: 'scan-code', sym: 'camera', disabled: busy}) : ''}<div class="sheet-actions"><button type="button" class="plain-link" data-action="open-app-send">Campus for Mac didn't open? Try again</button><span class="spacer"></span>${btn(busy ? 'Importing…' : 'Import', {action: 'receive-code', kind: 'prominent', disabled: busy || !value.trim()})}</div></div>`;
   }
   function openReceiveSheet() {
     receiveState = {value: '', busy: false, error: ''};
@@ -680,7 +681,7 @@
     if (s.status === 'error') body = `${notice(s.error, 'warn')}<div class="sheet-actions"><span class="spacer"></span>${btn('Try Again', {action: 'send-to-app', kind: 'prominent'})}</div>`;
     else if (s.status === 'working') body = `<div class="transfer-wait">${spinner}<span>Encrypting and uploading…</span></div>`;
     else if (Date.now() >= s.expiresAt) body = `${notice('This code has expired.', 'warn')}<div class="sheet-actions"><span class="spacer"></span>${btn('Get a New Code', {action: 'send-to-app', kind: 'prominent'})}</div>`;
-    else body = `<div class="code-display" aria-label="Transfer code">${esc(s.code)}</div><div class="caption sub transfer-expiry">Expires in <span data-send-countdown>${countdown(s.expiresAt - Date.now())}</span> · works once</div><div class="sheet-actions">${btn('Copy Code', {action: 'copy-code', sym: 'stack'})}${btn('Open Campus for Mac', {action: 'open-app-import', sym: 'arrowUpRight'})}<span class="spacer"></span>${btn('Done', {action: 'close', kind: 'prominent'})}</div>`;
+    else body = `<div class="transfer-qr">${CampusQR.svg(s.code.replace('-', ''), `QR code for ${s.code}`)}</div><div class="code-display" aria-label="Transfer code">${esc(s.code)}</div><div class="caption sub transfer-expiry">Expires in <span data-send-countdown>${countdown(s.expiresAt - Date.now())}</span> · works once</div><div class="sheet-actions">${btn('Copy Code', {action: 'copy-code', sym: 'stack'})}${btn('Open Campus for Mac', {action: 'open-app-import', sym: 'arrowUpRight'})}<span class="spacer"></span>${btn('Done', {action: 'close', kind: 'prominent'})}</div>`;
     return `<div class="transfer-sheet"><div class="transfer-sheet-head"><h2 class="display-22">Send to Campus for Mac</h2>${iconButton('Close', 'xmark', 'close')}</div><p class="subheadline sub">Campus for Mac opens with this code filled in; if it doesn't, choose Import from Campus Web… there and enter it. Your data is encrypted in this browser with a key made from the code, so only someone with the code can read it.</p>${body}</div>`;
   }
   async function startSend() {
@@ -705,6 +706,86 @@
       sendState = {status: 'error', error: error.message || 'Campus transfer failed.'};
     }
     if (layers.some(layer => layer.render === sendSheet)) redrawTransfer();
+  }
+
+  // Scanning the QR code Campus for Mac shows. Only offered on phones and tablets, where the
+  // camera faces the Mac's screen; desktops type the code.
+  const canScan = () => Boolean(navigator.mediaDevices?.getUserMedia) && matchMedia('(pointer: coarse)').matches;
+  let scanState = null;
+  function scanSheet() {
+    const s = scanState || {};
+    return `<div class="transfer-sheet scan-sheet"><div class="transfer-sheet-head"><h2 class="display-22">Scan QR Code</h2>${iconButton('Close', 'xmark', 'scan-cancel')}</div><p class="subheadline sub">Point the camera at the QR code in Campus for Mac.</p><div class="scan-frame"><video data-scan-video playsinline muted></video></div>${s.error ? notice(s.error, 'warn') : ''}<div class="sheet-actions"><span class="spacer"></span>${btn('Cancel', {action: 'scan-cancel'})}</div></div>`;
+  }
+  // jsQR is only fetched when someone scans and the browser can't read QR codes itself (Safari).
+  let jsQRLoading;
+  function loadJsQR() {
+    if (window.jsQR) return Promise.resolve(window.jsQR);
+    jsQRLoading ||= new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+      script.integrity = 'sha384-b5Ya4Bq3qCyz39m2ISh+4DxjAIljdeFwK/BsXLuj9gugaNwAcj/ia15fxNZL9Nlx';
+      script.crossOrigin = 'anonymous';
+      script.onload = () => window.jsQR ? resolve(window.jsQR) : reject(Error('missing'));
+      script.onerror = () => { jsQRLoading = null; reject(Error('load')); };
+      document.head.append(script);
+    });
+    return jsQRLoading;
+  }
+  function stopScan() {
+    if (!scanState) return;
+    scanState.stopped = true;
+    cancelAnimationFrame(scanState.frame);
+    scanState.stream?.getTracks().forEach(track => track.stop());
+  }
+  async function startScan() {
+    stopScan();
+    const run = scanState = {};
+    openSheet(scanSheet, 'transfer');
+    try {
+      run.stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'environment'}, audio: false});
+      if (run.stopped) return run.stream.getTracks().forEach(track => track.stop());
+      const video = document.querySelector('[data-scan-video]');
+      video.srcObject = run.stream;
+      await video.play();
+      let read;
+      if ('BarcodeDetector' in window && (await BarcodeDetector.getSupportedFormats?.())?.includes('qr_code')) {
+        const detector = new BarcodeDetector({formats: ['qr_code']});
+        read = async () => (await detector.detect(video))[0]?.rawValue;
+      } else {
+        const decode = await loadJsQR(), canvas = document.createElement('canvas'), context = canvas.getContext('2d', {willReadFrequently: true});
+        read = async () => {
+          const width = Math.min(640, video.videoWidth), height = Math.round(video.videoHeight * width / (video.videoWidth || 1));
+          if (!width || !height) return null;
+          canvas.width = width; canvas.height = height;
+          context.drawImage(video, 0, 0, width, height);
+          return decode(context.getImageData(0, 0, width, height).data, width, height, {inversionAttempts: 'dontInvert'})?.data;
+        };
+      }
+      const tick = async () => {
+        // Closed some other way (Escape, the backdrop): let the camera go.
+        if (!layers.some(layer => layer.render === scanSheet)) stopScan();
+        if (run.stopped) return;
+        let code = null;
+        try { code = CampusTransfer.normalizeCode(String(await read() || '')); } catch {}
+        if (run.stopped) return;
+        if (code) {
+          stopScan();
+          layers = layers.filter(layer => layer.render !== scanSheet);
+          receiveState = {value: CampusTransfer.formatCode(code), busy: false, error: ''};
+          if (!layers.some(layer => layer.render === receiveSheet)) openSheet(receiveSheet, 'transfer'); else drawLayers();
+          return submitCode();
+        }
+        run.frame = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch (error) {
+      if (run.stopped) return;
+      stopScan();
+      run.error = error?.name === 'NotAllowedError' ? 'Campus needs camera access to scan. Allow it in your browser settings, or type the code instead.'
+        : error?.message === 'load' ? 'The QR reader could not load. Check your connection or type the code instead.'
+        : 'The camera could not start. Type the code instead.';
+      if (layers.at(-1)?.render === scanSheet) drawLayers();
+    }
   }
 
   // Settings (CampusSettingsView)
@@ -1003,6 +1084,8 @@
       case 'receive-code': submitCode(); break;
       case 'open-app-send': CampusTransfer.openApp('send'); break;
       case 'open-app-import': CampusTransfer.openApp('import', sendState?.code); break;
+      case 'scan-code': startScan(); break;
+      case 'scan-cancel': stopScan(); scanState = null; if (layers.at(-1)?.render === scanSheet) closeLayer(); break;
       case 'copy-code': navigator.clipboard?.writeText(sendState?.code || '').then(() => toast('Code copied.'), () => toast('Could not copy the code.')); break;
       case 'hide-app-promo': hideAppPromo(); break;
       case 'send-to-app': startSend(); break;
